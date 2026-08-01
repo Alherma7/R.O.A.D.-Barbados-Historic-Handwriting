@@ -1,0 +1,24 @@
+# Competition raw images - large (~435MB), re-downloadable from Zindi's Data page.
+data/raw/images/*
+!data/raw/images/.gitkeep
+
+# Trained model checkpoints - regenerable from notebooks, not source.
+models/*
+!models/.gitkeep
+
+# Generated predictions/submissions.
+outputs/*
+!outputs/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini

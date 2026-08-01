@@ -1,0 +1,3 @@
+Place competition images here, named "<ID>.jpg" to match Train.csv/Test.csv IDs
+(see src/data.py::build_image_path). Not included in the downloaded starter
+pack — download the image archive from the Zindi competition's Data page.

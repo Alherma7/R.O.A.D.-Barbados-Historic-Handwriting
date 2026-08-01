@@ -1,0 +1,17 @@
+pandas
+numpy
+pillow
+scikit-learn
+pytest
+pyyaml
+tqdm
+matplotlib
+rapidfuzz
+torch
+
+# torch backs the from-scratch CRNN+CTC baseline (notebooks/05_baseline_crnn.ipynb).
+# Approach-specific heavy deps beyond that (transformers, paddleocr, kraken) are
+# NOT installed here. Once a starter-pack OCR approach is chosen, install from:
+#   reference/starter_pack/VLM/requirements.txt
+#   reference/starter_pack/PaddleOCR/requirements.txt
+#   reference/starter_pack/Kraken-OCR/requirements.txt
