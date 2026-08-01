@@ -115,6 +115,21 @@ before wiring one into `src/model.py`.
   before this point (e.g. any CRNN baseline numbers from
   `notebooks/05_baseline_crnn.ipynb` run before this fix) used the wrong
   metric and needs to be recomputed.
+- 2026-08-01: First baseline — CRNN+CTC trained from scratch (no
+  pretrained weights), per user request, before comparing the starter
+  pack's pretrained approaches. `notebooks/05_baseline_crnn.ipynb`:
+  CNN + 2-layer BiLSTM + CTC (Shi, Bai & Yao 2015, see RESOURCES.md),
+  trained ~30+ epochs on the full fit split (3,280 rows), evaluated with
+  the corrected `src/evaluate.py` on the fixed 120-row val sample.
+  **Result: `score = 0.568` (`wer_weighted` 7.01, `cer_weighted` 15.39).**
+  Train loss kept dropping while val score plateaued/CER ticked up
+  slightly around epoch 10-15 — mild overfitting, expected training every
+  weight from scratch on only 3,280 examples. Left as-is (no dropout/
+  weight-decay/early-stopping added) to keep this a clean reference
+  number; revisit only if we later want to push this specific approach
+  further. Model weights saved to `models/crnn_baseline.pt`. This is the
+  number the starter-pack approaches (VLM/PaddleOCR/Kraken) need to beat
+  on the same 120-row val sample to be worth adopting.
 
 ## Next steps
 
@@ -126,11 +141,18 @@ before wiring one into `src/model.py`.
 - [x] Decide on a train/validation split strategy — `GroupShuffleSplit` on
       exact `Target` text, see Progress and
       `notebooks/03_train_val_split.ipynb`
-- [ ] Run VLM / PaddleOCR / Kraken baselines from `reference/starter_pack/`
-      on the same validation split, score each with `src/evaluate.py`
-- [ ] Pick a winner, wire it into `src/model.py`, graduate `src/train.py`
-      from skeleton to working end-to-end script
-- [ ] Try to locate/replicate Zindi's actual `compute_weighted_cer`/
-      `compute_weighted_wer` (the `evaluations/` module referenced but not
-      shipped in the starter pack) to confirm local scores track the
-      leaderboard
+- [x] From-scratch CRNN+CTC baseline — `score = 0.568` on the 120-row val
+      sample, see Progress and `notebooks/05_baseline_crnn.ipynb`
+- [x] Locate/confirm Zindi's actual scoring formula — done via the
+      [official discussion forum](https://zindi.world/competitions/road-barbados-historic-handwriting-challenge/discussions/33847),
+      see Progress ("Corrected the evaluation metric")
+- [ ] Run PaddleOCR baseline (zero-shot, no training needed) on the same
+      120-row val sample, compare `score` against the CRNN's 0.568
+- [ ] Run Kraken baseline (pretrained model download + inference) on the
+      same val sample
+- [ ] Run VLM (Qwen2-VL LoRA) baseline — needs a short fine-tune first
+      since `reference/starter_pack/VLM/inference.py` requires a trained
+      adapter
+- [ ] Pick a winner among CRNN/PaddleOCR/Kraken/VLM, wire it into
+      `src/model.py`, graduate `src/train.py` from skeleton to a working
+      end-to-end script
