@@ -10,6 +10,30 @@
   CTC loss/decoding, the standard approach for variable-length line-level OCR without a
   pretrained backbone. Requested as the first baseline before comparing the starter pack's
   pretrained approaches (VLM/PaddleOCR/Kraken).
+- **Srivastava, N., Hinton, G., Krizhevsky, A., Sutskever, I., & Salakhutdinov, R. (2014).
+  Dropout: A Simple Way to Prevent Neural Networks from Overfitting.** JMLR.
+  (https://jmlr.org/papers/v15/srivastava14a.html)
+  Why: source for the regularization added to `CRNN` in
+  `notebooks/05_baseline_crnn.ipynb` to mitigate the from-scratch baseline's overfitting
+  (`nn.Dropout2d` after the last two CNN blocks, inter-layer LSTM dropout, dropout before
+  the final classifier).
+- **Loshchilov, I., & Hutter, F. (2019). Decoupled Weight Decay Regularization.** ICLR.
+  (https://arxiv.org/abs/1711.05101)
+  Why: source for using `AdamW` (decoupled weight decay) instead of `Adam` + L2 in the same
+  regularization pass, so weight decay doesn't get folded into the adaptive gradient scaling.
+- **Prechelt, L. (1998). Early Stopping — But When?** In *Neural Networks: Tricks of the
+  Trade*, Springer.
+  (https://link.springer.com/chapter/10.1007/3-540-49430-8_3)
+  Why: source for the early-stopping criterion (stop after `PATIENCE` epochs with no
+  validation-score improvement, keep the best checkpoint) added alongside dropout/weight
+  decay in the same notebook.
+
+- **Li, M. et al. (2021). TrOCR: Transformer-based Optical Character Recognition with
+  Pre-trained Models.** (https://arxiv.org/abs/2109.10282)
+  Why: source for `microsoft/trocr-base-handwritten`, used as a zero-shot sanity check
+  against the CRNN in `notebooks/05_baseline_crnn.ipynb`'s comparison — encoder-decoder
+  architecture (ViT encoder + RoBERTa-initialized decoder), pretrained on modern English
+  handwriting (IAM dataset).
 
 ## Comparable projects / official material
 

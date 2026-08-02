@@ -130,6 +130,76 @@ before wiring one into `src/model.py`.
   further. Model weights saved to `models/crnn_baseline.pt`. This is the
   number the starter-pack approaches (VLM/PaddleOCR/Kraken) need to beat
   on the same 120-row val sample to be worth adopting.
+- 2026-08-02: Mitigated the baseline CRNN's overfitting — same
+  `notebooks/05_baseline_crnn.ipynb`, three changes together (see
+  RESOURCES.md): spatial/LSTM/pre-classifier dropout (Srivastava et al.
+  2014, `DROPOUT=0.2`), `AdamW` with decoupled weight decay (Loshchilov &
+  Hutter 2019, `WEIGHT_DECAY=1e-4`), and early stopping on the val score
+  with best-checkpoint restore (Prechelt 1998, `MAX_EPOCHS=50`,
+  `PATIENCE=8`). Trained and evaluated the same way as the baseline (same
+  fit split, same fixed 120-row val sample), compared directly against
+  the recorded 0.568 rather than a same-run from-scratch baseline (user's
+  explicit choice — faster, at the cost of not isolating the
+  eval-cadence/checkpoint-selection change from the regularization
+  itself). **Result: `score = 0.691` at epoch 50 (`wer_weighted` 5.13,
+  `cer_weighted` 10.42), +0.123 over the baseline.** Early stopping never
+  triggered — the val score was still improving at `MAX_EPOCHS=50`, so
+  this may not be the ceiling for this approach. Clears the gate
+  (beats 0.568); saved as the new reference model,
+  `models/crnn_regularized.pt`.
+- 2026-08-02: Continued training `crnn_regularized.pt` for another
+  up-to-50-epoch budget (loaded the checkpoint, fresh `AdamW` state, same
+  `train_with_early_stopping` helper, `CONTINUE_PATIENCE=8`) instead of
+  retraining from scratch with a higher `MAX_EPOCHS` — no LR scheduler is
+  used, so a warm start from the checkpoint reaches the same place as a
+  longer single run without repeating the first 50 epochs (only the
+  optimizer's momentum state resets, not the weights). **Result: `score =
+  0.702` (`wer_weighted` 4.98, `cer_weighted` 9.95), +0.011 over 0.691,
+  best epoch 18/50.** Early stopping *did* trigger action this time (best
+  found well before the epoch budget ran out) — much smaller gain than the
+  first regularization pass, suggesting this architecture/setup is
+  approaching its ceiling. Clears the gate; `models/crnn_regularized.pt`
+  updated in place.
+
+- 2026-08-02: Informal zero-shot sanity checks (8 val-sample rows, not the
+  full 120-row comparison) for two starter-pack/off-the-shelf approaches,
+  before deciding whether either is worth a full run or fine-tuning:
+  - **PaddleOCR** (`PP-OCRv6_medium_rec`, recognition-only via
+    `paddleocr.TextRecognition` — no page detection needed since our
+    images are already single-line crops, unlike the starter pack's
+    `inference.py` which assumes full-page input): `score = 0.393`
+    (`wer_weighted` 8.0, `cer_weighted` 30.1). Failures look like garbled
+    character-level noise (e.g. `'roloafodgint rlaynw and for ovor
+    roufirnds anw by thod urofouts by'`), some empty predictions.
+  - **TrOCR** (`microsoft/trocr-base-handwritten`, see RESOURCES.md):
+    `score = 0.382` (`wer_weighted` 8.25, `cer_weighted` 30.1) — nearly
+    tied with PaddleOCR numerically, but fails differently: fluent,
+    grammatical modern-English sentences that are semantically invented
+    (e.g. `"me was the Premier of Utah's calls called me then the basis
+    of the subsequent"`), not character noise. Consistent with its
+    RoBERTa-initialized decoder falling back on its modern-English
+    language-model prior when faced with unfamiliar 17th-century cursive,
+    rather than transcribing literally.
+  - **Both far below the CRNN's 0.702**, and roughly tied with each
+    other. Neither is competitive zero-shot; a real comparison would
+    need fine-tuning (LoRA/full) rather than off-the-shelf weights,
+    which is a much bigger investment than a sanity check.
+  - Environment note: installing `paddleocr`+`paddlepaddle` and `kraken`
+    into the shared Anaconda `base` environment (not an isolated
+    per-approach env, unlike what the starter pack's own `setup.sh`
+    scripts do) caused cascading dependency conflicts — `kraken`
+    silently downgraded `torch` to a CPU-only build and bumped `numpy`
+    to a version incompatible with other unrelated packages in the same
+    environment (`gensim`, `numba`, `contourpy`, `streamlit`). Rolled
+    back: uninstalled `paddleocr`/`paddlepaddle`/`paddlex`/`kraken` and
+    their exclusive dependencies, restored `torch`/`torchvision` to a
+    matching CUDA 12.6 build, and pinned `numpy`/`scipy`/`pillow`/
+    `fsspec`/`safetensors`/`click` back to ranges compatible with the
+    rest of the environment. No exact pre-session `pip freeze` was taken,
+    so this is a best-effort, conflict-free restoration, not a
+    guaranteed byte-for-byte one. Kraken was not tested (rolled back
+    before a working check ran). Lesson for future approaches: install
+    into an isolated environment per approach from the start.
 
 ## Next steps
 
@@ -146,13 +216,29 @@ before wiring one into `src/model.py`.
 - [x] Locate/confirm Zindi's actual scoring formula — done via the
       [official discussion forum](https://zindi.world/competitions/road-barbados-historic-handwriting-challenge/discussions/33847),
       see Progress ("Corrected the evaluation metric")
-- [ ] Run PaddleOCR baseline (zero-shot, no training needed) on the same
-      120-row val sample, compare `score` against the CRNN's 0.568
-- [ ] Run Kraken baseline (pretrained model download + inference) on the
-      same val sample
-- [ ] Run VLM (Qwen2-VL LoRA) baseline — needs a short fine-tune first
-      since `reference/starter_pack/VLM/inference.py` requires a trained
-      adapter
-- [ ] Pick a winner among CRNN/PaddleOCR/Kraken/VLM, wire it into
+- [x] Mitigate the CRNN baseline's overfitting (dropout + AdamW weight
+      decay + early stopping) — `score = 0.691` (+0.123), new reference
+      model `models/crnn_regularized.pt`, see Progress
+- [x] Continue training the regularized CRNN from checkpoint instead of a
+      higher-`MAX_EPOCHS` full retrain — `score = 0.702` (+0.011 over
+      0.691), gains diminishing (best epoch 18/50 this time vs. never
+      triggering early stopping the first pass) — likely near this
+      approach's ceiling, see Progress
+- [x] Zero-shot sanity check PaddleOCR and TrOCR (8-row informal sample,
+      not the full 120) against the CRNN's 0.702 — both far behind
+      (0.393 / 0.382), neither competitive off-the-shelf, see Progress
+- [x] Decide next approach given the informal check — **user's call:
+      fine-tune TrOCR only** (`notebooks/06_trocr_finetune.ipynb`);
+      PaddleOCR and Kraken dropped (PaddleOCR's zero-shot gap was as bad
+      as TrOCR's with more setup friction; Kraken untested after the
+      environment rollback, not worth revisiting); VLM/Qwen2-VL LoRA
+      dropped too (bigger investment, no zero-shot signal collected to
+      justify it over TrOCR)
+- [ ] Fine-tune TrOCR (`microsoft/trocr-base-handwritten`) on the fit
+      split, compare on the same 120-row val sample against the CRNN's
+      0.702 — in progress, `notebooks/06_trocr_finetune.ipynb`
+- [ ] Consider data augmentation on the CRNN (rotation/elastic distortion/
+      contrast) as a fallback if TrOCR fine-tuning doesn't beat 0.702
+- [ ] Pick a winner (CRNN vs. fine-tuned TrOCR), wire it into
       `src/model.py`, graduate `src/train.py` from skeleton to a working
       end-to-end script
