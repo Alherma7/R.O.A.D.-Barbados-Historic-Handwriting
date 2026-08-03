@@ -1,7 +1,15 @@
+![Sample predictions: CRNN (residual blocks + augmentation + elastic distortion) + beam search + n-gram LM](demo_comparison.png)
+
 # Barbados Road Challenge (Zindi)
 
 OCR competition: transcribe handwritten lines from historical Barbados
 documents. 4,098 train lines / 1,374 test lines, `ID,Target` format.
+
+**Current best pipeline:** CRNN (residual blocks + data augmentation +
+elastic distortion) decoded via CTC beam search + a character n-gram
+language model — `score = 0.826` on the 120-row val sample,
+`0.82658842` on the Zindi leaderboard. See Progress below for the full
+experiment log (architecture ablations, augmentation, decoding strategy).
 
 Leaderboard metric: `score = 1 - 0.5 * (wer_weighted/12 + cer_weighted/55)`,
 where `wer_weighted`/`cer_weighted` are the *raw* (unnormalized) mean
