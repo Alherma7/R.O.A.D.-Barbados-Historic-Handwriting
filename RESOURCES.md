@@ -34,9 +34,75 @@
   against the CRNN in `notebooks/05_baseline_crnn.ipynb`'s comparison — encoder-decoder
   architecture (ViT encoder + RoBERTa-initialized decoder), pretrained on modern English
   handwriting (IAM dataset).
+- **Springenberg, J. T., Dosovitskiy, A., Brox, T., & Riedmiller, M. (2015). Striving for
+  Simplicity: The All Convolutional Net.** (https://arxiv.org/abs/1412.6806)
+  Why: source for `CRNNStride2` in `notebooks/07_crnn_architecture_variants.ipynb` —
+  replaces every `MaxPool2d` in the CNN backbone with an equivalent-stride convolution, so
+  the downsampling is learned instead of fixed to a max operation.
+- **He, K., Zhang, X., Ren, S., & Sun, J. (2015). Deep Residual Learning for Image
+  Recognition.** (https://arxiv.org/abs/1512.03385)
+  Why: source for `ResidualBlock`/`CRNNResidual` in
+  `notebooks/07_crnn_architecture_variants.ipynb` — wraps each CNN stage in a residual
+  (skip) connection while keeping the existing `MaxPool2d` downsampling unchanged, to
+  isolate the residual-connection effect from the pooling/stride experiment above.
+- **Cho, K. et al. (2014). Learning Phrase Representations using RNN Encoder-Decoder for
+  Statistical Machine Translation.** (https://arxiv.org/abs/1406.1078); **Chung, J., Gulcehre,
+  C., Cho, K., & Bengio, Y. (2014). Empirical Evaluation of Gated Recurrent Units on
+  Sequence Modeling.** (https://arxiv.org/abs/1412.3555)
+  Why: source for `CRNNGRU` in `notebooks/07_crnn_architecture_variants.ipynb` — swaps the
+  BiLSTM for a BiGRU (fewer gates/parameters, comparable performance in the Chung et al.
+  comparison), isolating the recurrent-cell-type effect from the CNN backbone.
+
+- **Graves, A., Fernández, S., Gomez, F., & Schmidhuber, J. (2006). Connectionist
+  Temporal Classification: Labelling Unsegmented Sequence Data with Recurrent Neural
+  Networks.** ICML. (https://www.cs.toronto.edu/~graves/icml_2006.pdf)
+  Why: source for CTC prefix beam search decoding, tried in
+  `notebooks/07_crnn_architecture_variants.ipynb` as a decode-time-only alternative to
+  `greedy_decode` on the already-trained `crnn_residual.pt` (0.720) — no retraining
+  needed, since it only changes how output probabilities are turned into text.
 
 ## Comparable projects / official material
 
+- **Hannun, A. (2017). Sequence Modeling With CTC.** Distill.
+  (https://distill.pub/2017/ctc/)
+  Why: practical write-up of the CTC prefix beam search algorithm (with worked
+  pseudocode) used to implement `beam_search_decode` in
+  `notebooks/07_crnn_architecture_variants.ipynb`, alongside the original Graves et
+  al. 2006 paper above.
+- **Loshchilov, I., & Hutter, F. (2016). SGDR: Stochastic Gradient Descent with Warm
+  Restarts.** ICLR 2017. (https://arxiv.org/abs/1608.03983)
+  Why: source for the cosine-annealing LR schedule tried on `CRNNResidual` in
+  `notebooks/07_crnn_architecture_variants.ipynb` (no restarts, single cosine decay
+  over `T_max=MAX_EPOCHS`) — chosen over `OneCycleLR` because it degrades gracefully
+  under early stopping (monotonic decay, no need to complete a full up/down cycle),
+  unlike OneCycle which assumes a fixed, known total step count.
+- **Wigington, C., Stewart, S., Davis, B., Barrett, B., Price, B., & Cohen, S. (2017).
+  Data Augmentation for Recognition of Handwritten Words and Lines Using a CNN-LSTM
+  Network.** ICDAR. (https://ieeexplore.ieee.org/document/8270041)
+  Why: source for the light geometric/intensity augmentation (rotation, brightness/
+  contrast jitter, additive Gaussian noise) tried on `CRNNResidual`'s fit split in
+  `notebooks/07_crnn_architecture_variants.ipynb` — directly about augmentation for
+  CNN-LSTM handwritten line recognition, the same architecture family as this
+  project's CRNN. Implemented with `torchvision.transforms.functional` (already
+  installed) instead of adding Albumentations, to avoid repeating the
+  opencv/numpy version conflict from the paddleocr/kraken install incident above.
+- **Simard, P. Y., Steinkraus, D., & Platt, J. C. (2003). Best Practices for
+  Convolutional Neural Networks Applied to Visual Document Analysis.** ICDAR.
+  (https://www.microsoft.com/en-us/research/publication/best-practices-for-convolutional-neural-networks-applied-to-visual-document-analysis/)
+  Why: source for elastic distortion, tried as an addition on top of the existing
+  rotation/brightness/contrast/noise augmentation in
+  `notebooks/07_crnn_architecture_variants.ipynb` (continuation from
+  `crnn_residual_aug.pt`, 0.769) — a smooth random displacement field
+  (Gaussian-smoothed noise, `torch.nn.functional.grid_sample`) simulating natural
+  handwriting stroke variability, which affine transforms alone don't capture.
+- **Amodei, D. et al. (2016). Deep Speech 2: End-to-End Speech Recognition in
+  English and Mandarin.** ICML. (https://arxiv.org/abs/1512.02595)
+  Why: source for the CTC beam search + n-gram language model shallow-fusion
+  formula (`score = log P_ctc + alpha * log P_lm`) used in
+  `notebooks/07_crnn_architecture_variants.ipynb`'s `beam_search_decode`, with a
+  character n-gram LM trained on this project's own fit-split `Target` text
+  (add-k smoothed counting, not KenLM — avoids a native-dependency install for a
+  corpus this small, ~200K characters).
 - **Zindi Barbados Road Challenge — starter pack** (`reference/starter_pack/`, provided by the competition)
   Why: source of the three baseline OCR approaches (VLM, PaddleOCR, Kraken). Its
   `eval_metrics.py` implied a `0.7*CER + 0.3*WER` leaderboard blend that turned out to be

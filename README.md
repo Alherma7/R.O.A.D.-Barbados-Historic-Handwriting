@@ -200,6 +200,161 @@ before wiring one into `src/model.py`.
     guaranteed byte-for-byte one. Kraken was not tested (rolled back
     before a working check ran). Lesson for future approaches: install
     into an isolated environment per approach from the start.
+- 2026-08-03: Three isolated CRNN architecture ablations
+  (`notebooks/07_crnn_architecture_variants.ipynb`, see RESOURCES.md),
+  each changing exactly one piece and holding the rest constant, compared
+  on the same fixed 120-row val sample:
+  - **Stride=2 convolutions instead of `MaxPool2d`** (Springenberg et al.
+    2015): `score = 0.633` (`wer_weighted` 5.92, `cer_weighted` 13.25).
+    Clearly worse than both the same-run baseline (0.691) and the
+    recorded reference (0.702). **Negative result** — not adopted.
+  - **BiGRU instead of BiLSTM** (Cho et al. 2014; Chung et al. 2014):
+    `score = 0.696` (`wer_weighted` 5.08, `cer_weighted` 10.14). Edges out
+    the same-run baseline (0.691, +0.005) but falls short of the recorded
+    reference (0.702, -0.006) — within the run-to-run noise band between
+    the same-run baseline and the recorded one (0.691 vs 0.702). Per this
+    project's gate ("only wins count, no matter how small the
+    regression"), doesn't clear the bar against the actual reference
+    model. **Negative result** — not adopted, though close enough to be
+    worth revisiting if the CNN backbone changes later.
+  - **Residual blocks per CNN stage, `MaxPool2d` downsampling unchanged**
+    (He et al. 2015): `score = 0.720` (`wer_weighted` 4.76,
+    `cer_weighted` 8.99) at epoch 47/50 — beats both the same-run baseline
+    (0.691, +0.029) and the recorded reference (0.702, +0.018). Confirmed
+    with a qualitative check (8 decoded val lines, same batch as notebook
+    05's example cell): genuinely more accurate, not just a higher
+    number — e.g. "Christian"/"within" now correct where the baseline had
+    "Chrstian"/"withn", and the hardest line
+    ("Towne of St Michaells...") is noticeably closer to the reference
+    text, with no new failure mode (still garbles the same handful of
+    dense-cursive lines, doesn't invent text). **Wins the gate — new
+    reference model**, saved to `models/crnn_residual.pt`, superseding
+    `models/crnn_regularized.pt` (0.702).
+  - Note: `MAX_EPOCHS=50`/`PATIENCE=8` unchanged from notebook 05; the
+    residual variant's best epoch (47) is close to the budget ceiling
+    with train loss still dropping, so a continuation run (like the one
+    done for the original CRNN) might squeeze out a bit more — not done
+    yet, see Next steps.
+- 2026-08-03: **CTC prefix beam search decoding** (Graves et al. 2006;
+  algorithm per Hannun 2017, distill.pub — see RESOURCES.md) tried as a
+  decode-time-only change on top of `crnn_residual.pt` (0.720), no
+  retraining needed. Implemented from scratch (no `ctcdecode` install, to
+  avoid repeating the paddleocr/kraken dependency-conflict incident above)
+  and verified against a brute-force CTC forward score on small synthetic
+  examples before running it on real data. **Result: `score = 0.721` at
+  `beam_width=10` (delta +0.001 vs. greedy's 0.720) — noise, not a real
+  improvement.** Expected: beam search mainly helps when per-frame
+  probabilities are ambiguous or when combined with an external language
+  model that reorders candidates; neither applies here (no period-English
+  LM available, and the trained CRNN's per-frame outputs are already
+  fairly confident). **Negative/inconclusive result** — `greedy_decode`
+  stays the default, not worth the added CPU decoding cost for this gain.
+- 2026-08-03: **Cosine-annealing LR schedule** (Loshchilov & Hutter 2016,
+  SGDR, no restarts — see RESOURCES.md) tried on `CRNNResidual`, isolating
+  just the schedule against the winning constant-LR run (0.720): same
+  architecture/seed/optimizer, `CosineAnnealingLR(T_max=MAX_EPOCHS)` added.
+  **Result: `score = 0.692` at best epoch 48/50, delta -0.028 — a clear
+  regression, not noise.** Likely cause: the constant-LR residual run
+  never triggered early stopping and was still improving at epoch 47/50,
+  implying this architecture/data combo benefits from a high, sustained
+  LR through nearly the whole budget; cosine annealing decays LR by >8x
+  as early as epoch 40, probably settling the model into a worse optimum
+  before it could reach the same improvement the constant-LR run found.
+  **Negative result** — not adopted; `crnn_residual.pt` (constant LR,
+  0.720) remains the reference model. Might be worth revisiting with a
+  longer `T_max` (more epochs) rather than ruling out cosine annealing
+  entirely, but not tried.
+- 2026-08-03: **Data augmentation** (Wigington et al. 2017, ICDAR — see
+  RESOURCES.md): light rotation (±3°), brightness/contrast jitter, and
+  additive Gaussian noise applied train-time-only on `CRNNResidual`'s fit
+  split, via `torchvision.transforms.functional` (no new dependency —
+  deliberately not Albumentations, to avoid repeating the opencv/numpy
+  conflict from the paddleocr/kraken incident above). Trained from scratch
+  (same isolation approach as the other three variants, not a continuation
+  from `crnn_residual.pt`, so the comparison attributes the gain to
+  augmentation alone). **Result: `score = 0.769` at best epoch 47/50,
+  delta +0.049 over the non-augmented residual (0.720) — the largest gain
+  of the whole architecture-variant round, and a clean regularization
+  signature** (train loss ~0.38-0.45 in the last 10 epochs, vs. ~0.14-0.15
+  for the non-augmented run over the same range — harder to fit the
+  augmented data, but generalizes much better). Confirmed with the same
+  8-line qualitative check: several previously-garbled words now exact
+  (e.g. "appeared", "George", "Jenning", "Genall", "who", "theire"), no
+  new failure mode. **Wins the gate — new reference model**, saved to
+  `models/crnn_residual_aug.pt`, superseding `crnn_residual.pt` (0.720).
+- 2026-08-03: **CTC beam search + character n-gram LM (shallow fusion)**
+  (Graves et al. 2006; Amodei et al. 2016, "Deep Speech 2" for the fusion
+  formula - see RESOURCES.md), in a new notebook,
+  `notebooks/08_decoding_strategies.ipynb`, decode-time-only on top of
+  `crnn_residual_aug.pt` (0.769), no retraining. A 4-gram character LM
+  (add-k smoothed counting - deliberately not KenLM, avoiding a native-
+  dependency install for a ~200K-character corpus) trained on the fit
+  split's own `Target` text, fused into beam search via
+  `score = log P_ctc + alpha * log P_lm`. Caught and fixed a real
+  correctness bug in a first pasted implementation before using it: it
+  never checked whether a newly emitted character matched the prefix's
+  last character without a blank in between, so repeated letters never
+  collapsed per CTC's actual rule (verified concretely - on a
+  repeat-biased synthetic input it emitted one character per timestep,
+  e.g. 'aaaaaa' for a 6-frame input, vs. the correct 'a'/'aa'). Rebuilt on
+  the already-validated `beam_search_decode` from earlier in the session
+  instead (which tracks blank-/non-blank-ending paths separately and
+  merges duplicate prefixes via logsumexp), confirmed via a deterministic
+  known-answer test (a,a,blank,a -> 'aa') plus a toy case showing the LM
+  measurably changes the decoded output. **Swept the fusion weight
+  `alpha`: peak at `alpha=0.40`, `score = 0.819` (delta +0.050 over
+  greedy's 0.769) - tied with data augmentation as the largest single
+  gain of the session**, over a broad, stable plateau (0.814-0.819 across
+  `alpha` 0.20-0.50, not a fragile noise spike). Confirmed via the same
+  8-line qualitative check: corrections concentrate on words that recur
+  often in this corpus ("Towne", "persones", "Stanfast", "these", "upon"
+  x2, "holy"), with only minor one-word regressions elsewhere - no sign
+  of the TrOCR-style failure mode (inventing fluent but wrong boilerplate
+  instead of reading the image). **Wins the gate - new default inference
+  pipeline**: `crnn_residual_aug.pt` + beam search (`beam_width=10`) +
+  this 4-gram LM at `alpha=0.40`, no new model checkpoint needed
+  (decode-time only).
+- 2026-08-03: **Elastic distortion continuation, confirmed.** The
+  `crnn_residual_aug.pt` + elastic distortion continuation started
+  earlier (`notebooks/07_crnn_architecture_variants.ipynb`) finished:
+  early stopping triggered cleanly at epoch 37 (best epoch 29, no
+  improvement for 8 epochs after) - unlike every prior CRNN run in this
+  project, which either never triggered early stopping or triggered right
+  at the epoch budget, this one shows a genuine, clean convergence signal.
+  **Result: `score = 0.796`, delta +0.027 over the checkpoint (0.769).**
+  Confirmed via the same 8-line qualitative check: several more words
+  fixed vs. the non-elastic augmented model ("Michaells", "Stanfast",
+  "pte", "these", "upon", "holy"), only two minor one-letter regressions.
+  **Wins the gate - new reference model**, saved to
+  `models/crnn_residual_aug_elastic.pt`, superseding `crnn_residual_aug.pt`
+  (0.769).
+- 2026-08-03: **Beam search + n-gram LM, re-applied on the elastic-
+  distortion checkpoint** (`notebooks/08_decoding_strategies.ipynb`,
+  `CHECKPOINT_PATH` updated to `crnn_residual_aug_elastic.pt`). Re-swept
+  `alpha`: peak at 0.30/0.35/0.45 (all tied at `score = 0.826`), same
+  broad stable plateau shape as before (0.823-0.826 across `alpha`
+  0.20-0.50) - `alpha=0.35` chosen as the plateau's center. **Delta +0.030
+  over this checkpoint's greedy score (0.796), and +0.007 over the
+  previous best pipeline (`crnn_residual_aug.pt` + beam+LM, 0.819).**
+  Confirmed via the same qualitative check: more real-word fixes
+  ("Towne", "us", "attorneys", "released", "presents", "clayme",
+  "oathes"), same pattern as every prior LM-fusion check - no boilerplate
+  invention. **Current best pipeline and score: `crnn_residual_aug_elastic.pt`
+  + beam search (`beam_width=10`) + 4-gram LM at `alpha=0.35`,
+  `score = 0.826`.**
+- 2026-08-03: **First real Zindi submission**, generated in
+  `notebooks/08_decoding_strategies.ipynb` (`TestLineDataset` +
+  `test_collate_fn`, decoded all 1,374 `Test.csv` rows with the pipeline
+  above), saved via `src/data.py::save_output` and uploaded to the
+  competition. **Leaderboard result: `score = 0.82658842`
+  (`wer_weighted` 2.915, `cer_weighted` 5.715)** - matches the 120-row val
+  score (0.826) to within 0.0003. Confirms the whole session's
+  notebook-validate-before-wiring methodology generalizes correctly to
+  unseen data: no overfitting to the fixed val sample, no leakage from the
+  `GroupShuffleSplit` fit/val split, and every isolated experiment's
+  measured delta (architecture, augmentation, elastic distortion, beam+LM
+  decoding) should be trusted as real, not an artifact of the evaluation
+  procedure.
 
 ## Next steps
 
@@ -237,8 +392,48 @@ before wiring one into `src/model.py`.
 - [ ] Fine-tune TrOCR (`microsoft/trocr-base-handwritten`) on the fit
       split, compare on the same 120-row val sample against the CRNN's
       0.702 — in progress, `notebooks/06_trocr_finetune.ipynb`
-- [ ] Consider data augmentation on the CRNN (rotation/elastic distortion/
-      contrast) as a fallback if TrOCR fine-tuning doesn't beat 0.702
-- [ ] Pick a winner (CRNN vs. fine-tuned TrOCR), wire it into
-      `src/model.py`, graduate `src/train.py` from skeleton to a working
-      end-to-end script
+- [x] Three isolated CRNN architecture ablations
+      (`notebooks/07_crnn_architecture_variants.ipynb`, see RESOURCES.md):
+      stride=2 (0.633, negative), BiGRU (0.696, negative — doesn't clear
+      the recorded 0.702), residual blocks (0.720, **wins**) — see
+      Progress
+- [x] CTC prefix beam search decoding on `crnn_residual.pt` — `score =
+      0.721` (+0.001 vs. greedy, noise) — negative/inconclusive, see
+      Progress
+- [x] Cosine-annealing LR schedule on `CRNNResidual` — `score = 0.692`
+      (-0.028 vs. constant LR) — negative, see Progress
+- [x] Data augmentation (rotation/brightness/contrast/noise,
+      torchvision) on `CRNNResidual`, trained from scratch — `score =
+      0.769` (+0.049 over non-augmented residual), **wins — new
+      reference model** `models/crnn_residual_aug.pt`, see Progress
+- [x] Continuation training run for `crnn_residual_aug.pt` with elastic
+      distortion added on top of the existing augmentation
+      (`notebooks/07_crnn_architecture_variants.ipynb`) — `score = 0.796`
+      (+0.027), early stopping triggered cleanly this time, **wins — new
+      reference model** `models/crnn_residual_aug_elastic.pt`, see
+      Progress
+- [x] CTC beam search + character n-gram LM decode-time fusion
+      (`notebooks/08_decoding_strategies.ipynb`, see RESOURCES.md),
+      re-applied on `crnn_residual_aug_elastic.pt` after the elastic-
+      distortion win — `score = 0.826` at `alpha=0.35`, **current best
+      pipeline and score**, see Progress
+- [ ] Pick a final winner (residual+aug+elastic CRNN with beam+LM
+      decoding, 0.826, vs. fine-tuned TrOCR), wire the full inference
+      pipeline into `src/model.py` (including the beam+LM decoder, not
+      just the model forward pass), graduate `src/train.py` from
+      skeleton to a working end-to-end script
+- [ ] **Heuristic post-processing / domain rules on decoded predictions**
+      (not tried yet, user's idea for a future round): review the val
+      set's most common remaining errors and apply a strict correction
+      dictionary or a few regexes for recurring OCR confusions (0/O,
+      1/I/l, common place-name/proper-noun abbreviations, parcel-number
+      patterns) on top of the beam+LM output. Different in kind from the
+      "don't normalize `Target` spelling" decision in notebook 04's
+      Progress — that was about not altering training labels (period
+      spelling is genuine, not an error); this would be correcting the
+      model's *predictions* at inference time, a different scope. Needs
+      the usual gate before adopting (validate on the 120-row val sample
+      first, watch for it over-correcting genuinely-correct unusual
+      tokens - the same risk already flagged for the LM fusion). Possible
+      source when implemented: Nguyen et al. 2021, "Survey of Post-OCR
+      Processing Approaches" (ACM Computing Surveys).
