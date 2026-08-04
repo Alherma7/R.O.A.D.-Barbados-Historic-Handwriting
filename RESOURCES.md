@@ -114,6 +114,14 @@
   distances, not length-normalized CER/WER) — the authoritative source for
   `src/evaluate.py`, replacing the incorrect `0.7*CER + 0.3*WER` approximation.
 
+- **Lakshminarayanan, B., Pritzel, A., & Blundell, C. (2017). Simple and
+  Scalable Predictive Uncertainty Estimation using Deep Ensembles.** NeurIPS.
+  (https://arxiv.org/abs/1612.01474)
+  Why: source for the deep-ensemble approach in `notebooks/10_ensemble.ipynb`
+  - train several copies of the winning `CRNNResidual` recipe from different
+    random seeds and average their output probabilities before decoding,
+    rather than ensembling architecturally different or much-weaker models.
+
 ## Libraries
 
 - **rapidfuzz** (https://github.com/rapidfuzz/RapidFuzz)
@@ -127,6 +135,14 @@
   Why: `src/data.py::split_train_val` groups on exact `Target` text (the only entity-like
   signal available, since Train.csv has no document/page column) so duplicate boilerplate
   lines can't leak across fit/val — validated in `notebooks/03_train_val_split.ipynb`.
+- **PyTorch `torch.optim.lr_scheduler.ReduceLROnPlateau`**
+  (https://docs.pytorch.org/docs/stable/generated/torch.optim.lr_scheduler.ReduceLROnPlateau.html)
+  Why: added as an optional `scheduler` argument to
+  `src/train.py::train_with_early_stopping`, tried in
+  `notebooks/10_ensemble.ipynb` on the two new ensemble members — halves
+  the LR only once the val score plateaus for a few epochs, reactive
+  rather than the fixed preemptive decay of `CosineAnnealingLR` (tried and
+  rejected in `notebooks/07`, see above).
 
 ## Models
 

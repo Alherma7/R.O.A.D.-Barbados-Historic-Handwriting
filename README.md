@@ -5,11 +5,15 @@
 OCR competition: transcribe handwritten lines from historical Barbados
 documents. 4,098 train lines / 1,374 test lines, `ID,Target` format.
 
-**Current best pipeline:** CRNN (residual blocks + data augmentation +
-elastic distortion) decoded via CTC beam search + a character n-gram
-language model — `score = 0.826` on the 120-row val sample,
-`0.82658842` on the Zindi leaderboard. See Progress below for the full
-experiment log (architecture ablations, augmentation, decoding strategy).
+**Current best pipeline:** a 3-model deep ensemble (Lakshminarayanan et
+al. 2017) of the CRNN (residual blocks + data augmentation + elastic
+distortion) recipe — the original checkpoint plus two more seeds trained
+with `ReduceLROnPlateau` — decoded by averaging output probabilities
+before CTC beam search + a character n-gram language model —
+`score = 0.8409` on the 120-row val sample, `0.845943` on the Zindi
+leaderboard (up from the single-model pipeline's 0.826 / 0.82658842). See
+Progress below for the full experiment log (architecture ablations,
+augmentation, decoding strategy, ensembling).
 
 Leaderboard metric: `score = 1 - 0.5 * (wer_weighted/12 + cer_weighted/55)`,
 where `wer_weighted`/`cer_weighted` are the *raw* (unnormalized) mean
@@ -363,6 +367,138 @@ before wiring one into `src/model.py`.
   measured delta (architecture, augmentation, elastic distortion, beam+LM
   decoding) should be trusted as real, not an artifact of the evaluation
   procedure.
+- 2026-08-04: **Post-processing on top of the beam+LM output
+  (`notebooks/09_catastrophic_error_analysis.ipynb`), both negative.**
+  First, a per-line error scan on the 120-row val sample found 17/120
+  lines with `dist > 10` account for 47% of total edit distance -
+  near-total mistranscriptions, not fixable by post-processing. On the
+  other lines, tried:
+  - **Character-level confusion dictionary** (the original idea, e.g.
+    0/O/1/I/l): rare in practice (2-3 occurrences each). Most real
+    substitutions (S/s, n/r, e/i/a) are genuine cursive ambiguity, not a
+    systematic OCR-engine confusion, and go in both directions equally
+    (e.g. `S`->`s` 7 times, `s`->`S` 6 times) - no consistent rule to
+    apply. Whitespace normalization (strip/collapse) was the only
+    concretely testable idea and gave `score = 0.8269` (+0.0003 vs
+    0.8266) - noise.
+  - **Word-level lexicon correction**: pivoted here after finding the
+    model often outputs a fluent but non-existent word (`suney`, `tene`,
+    `Portesgne` for `surveyor`, `tenne`, `Fortesque`) rather than
+    scattered character noise. Built a lexicon from the fit split's own
+    vocabulary (~4,484 words from 3,280 lines - deliberately not a
+    general/period English dictionary, which isn't available, so this
+    stays consistent with "words that exist in this document's own
+    context"). Measured the opportunity first: 87.5% of predicted words
+    on the 120-row sample are already in-vocabulary; of the 159 that
+    aren't, 90% sit within edit distance 2 of a real vocabulary word.
+    Defined an objective (not hand-picked) correction rule - word length
+    >=5, unique nearest neighbor at distance 1 - and measured the net
+    effect: `score = 0.8281` (+0.0015), but it corrupted 2 previously
+    100%-correct lines by "fixing" rare-but-correct proper nouns
+    (`Bearnes`->`Barnes`, `Shamon`->`Shymon`) toward a more common
+    lexicon entry. Added a refinement excluding mid-sentence-capitalized
+    words (proper-noun heuristic): `score = 0.8277` (+0.0011), safer
+    (no longer breaks those two lines) but the net gain shrank to the
+    same order of magnitude as the beam-search-alone control from
+    notebook 08 (+0.001), already established as noise in this project.
+    Root cause: the 3,280-line fit split is too sparse to reliably tell
+    a genuine OCR error apart from a valid but rare period spelling or
+    proper noun (e.g. the model correctly predicted the period spelling
+    `Containeing`, which doesn't happen to appear anywhere in the
+    training text - only the variant `Conteyneing` does - so the rule
+    "corrected" it to the modern `Containing`, moving away from a
+    correct answer). **Not adopted** - would need a substantially larger
+    or genuinely period-appropriate dictionary to have real headroom,
+    which isn't available. Reference pipeline stays at 0.826. Possible
+    source if revisited: Nguyen et al. 2021, "Survey of Post-OCR
+    Processing Approaches" (ACM Computing Surveys).
+
+- 2026-08-04: **Graduated the winning pipeline from notebooks to `src/`**
+  (`src/features.py`, `src/model.py`, `src/train.py`), per the project's
+  notebook-to-`src/` graduation rule - every piece already validated in
+  notebooks/05, 07, 08 and cited in RESOURCES.md:
+  - `src/features.py`: `build_vocab`, `load_and_resize_image`,
+    `ctc_output_length`, `LineDataset`/`AugmentedLineDataset`
+    (rotation/brightness/noise + elastic distortion), `collate_lines`
+    (now also threads `ID` through, needed for real Test.csv submission
+    generation, which no committed notebook actually did end-to-end).
+  - `src/model.py`: `ResidualBlock`/`CRNNResidual`, `greedy_decode`,
+    `CharNgramLM`, `beam_search_decode`/`beam_decode_batch`, and a new
+    `predict()` inference entry point - refactored to take `idx_to_char`/
+    `blank` as explicit parameters instead of closing over notebook
+    globals.
+  - `src/train.py`: `main()` (full train-from-scratch pipeline,
+    reproducing `crnn_residual_aug_elastic.pt`) and
+    `generate_submission()` (inference-only, loads a checkpoint and
+    decodes `Test.csv` without retraining).
+  - `tests/test_features.py` + `tests/test_model.py` (16 new tests):
+    vocab/CTC-length edge cases, elastic distortion shape/identity-at-
+    alpha-0, `collate_lines` padding math, CRNN forward-pass shape, and
+    the same beam-search known-answer/LM-fusion checks already validated
+    in notebook 08 (`a,a,blank,a` -> `'aa'`; LM changes the decision;
+    `alpha=0` exactly disables it). All 29 project tests pass
+    (`pytest tests/`).
+  - **End-to-end sanity check**: loaded the real
+    `crnn_residual_aug_elastic.pt` checkpoint through the new
+    `src/model.py::CRNNResidual` and ran `src/model.py::predict()` on the
+    120-row val sample - `score = 0.8264`, matching the notebook-recorded
+    0.826 within run-to-run noise. Confirms the graduated code is a
+    faithful port, not just unit-test-clean.
+
+- 2026-08-04: **TrOCR fine-tuning and a from-scratch CNN+Transformer-decoder
+  hybrid both considered and dropped** before starting new modeling work.
+  TrOCR's fine-tuning attempt (see the 2026-08-02 entry) had already shown
+  the failure mode of a small (3,280-line) dataset paired with anything
+  that has to learn or unlearn its own language model; a hybrid CNN-
+  encoder + Transformer-decoder architecture (NRTR-style, Sheng, Chen & Xu
+  2019 — see RESOURCES.md) was proposed but risked the same failure mode,
+  so both were dropped in favor of ensembling — the only remaining
+  low-risk idea, since it only combines CTC models already validated on
+  this data instead of learning a new language-modeling component from
+  scratch.
+- 2026-08-04: **Deep ensemble of 3 independently-trained CRNNs
+  (`notebooks/10_ensemble.ipynb`), the session's biggest win.** Trained 2
+  more copies of the `crnn_residual_aug_elastic.pt` recipe from different
+  random seeds (43, 44), decoded by averaging output **probabilities**
+  across all 3 models before beam search + LM fusion, rather than voting
+  on each model's already-decoded text (Lakshminarayanan, Pritzel &
+  Blundell 2017, "Deep Ensembles" — see RESOURCES.md). Deliberately not
+  ensembling with older/weaker checkpoints (`crnn_baseline.pt` 0.568,
+  `crnn_regularized.pt` 0.702) to avoid diluting the average.
+  - Also added `torch.optim.lr_scheduler.ReduceLROnPlateau` (see
+    RESOURCES.md) to these two runs — halves the LR only once the val
+    score genuinely plateaus for a few epochs, reactive rather than the
+    fixed preemptive decay of `CosineAnnealingLR` (tried and rejected
+    earlier, `-0.028`). Needed one correction mid-session: with the
+    scheduler's `patience=3` equal to the early-stopping `patience=8`,
+    early stopping could fire almost immediately after the first LR
+    reduction, cutting off its benefit — raised early-stopping patience to
+    15 (≈5× the scheduler's) so multiple LR reductions get a fair chance
+    before giving up.
+  - Individual member scores (beam+LM, same 120-row val sample): existing
+    checkpoint 0.8264, seed 43 (continued after not plateauing at epoch
+    50) 0.8314, seed 44 (100 epochs from the start) 0.8289 — all beat the
+    original 0.826 individually, though the LR-schedule effect and the
+    longer-training effect aren't cleanly separated.
+  - **Ensemble result: `score = 0.8409`, +0.0095 over the best individual
+    member (0.8314) and +0.0145 over the original single-model reference
+    — both well above this project's established noise floor
+    (~0.001-0.002).** Confirmed with a qualitative check (same-batch
+    predictions, single model vs. ensemble): genuine fixes
+    (`pear`->`near`, `pertines`->`persones`) alongside genuine small
+    regressions (`Towne`->`one`, `us`->`in` — cases where 2 of 3 models
+    outvoted the one that had it right) — the expected ensembling
+    trade-off, not a new failure mode, and the same category of "minor
+    one-word regressions elsewhere" already accepted for the augmentation
+    and beam+LM wins. **Wins the gate — new reference pipeline.**
+  - **Real Zindi submission**, generated via `src/features.py`/
+    `src/model.py` (`LineDataset` with no `Target`, the same
+    `ensemble_decode_batch` averaging-probabilities approach, `beam_width`
+    10, `alpha=0.35`), saved via `src/data.py::save_output`, uploaded.
+    **Leaderboard result: `score = 0.845943042` (`wer_weighted`
+    2.590360156, `cer_weighted` 5.073781281)** — close to the 120-row val
+    score (0.8409, within ~0.005), same confirmation pattern as the first
+    submission: the session's methodology generalizes to unseen data.
 
 ## Next steps
 
@@ -425,23 +561,22 @@ before wiring one into `src/model.py`.
       re-applied on `crnn_residual_aug_elastic.pt` after the elastic-
       distortion win — `score = 0.826` at `alpha=0.35`, **current best
       pipeline and score**, see Progress
-- [ ] Pick a final winner (residual+aug+elastic CRNN with beam+LM
-      decoding, 0.826, vs. fine-tuned TrOCR), wire the full inference
-      pipeline into `src/model.py` (including the beam+LM decoder, not
-      just the model forward pass), graduate `src/train.py` from
-      skeleton to a working end-to-end script
-- [ ] **Heuristic post-processing / domain rules on decoded predictions**
-      (not tried yet, user's idea for a future round): review the val
-      set's most common remaining errors and apply a strict correction
-      dictionary or a few regexes for recurring OCR confusions (0/O,
-      1/I/l, common place-name/proper-noun abbreviations, parcel-number
-      patterns) on top of the beam+LM output. Different in kind from the
-      "don't normalize `Target` spelling" decision in notebook 04's
-      Progress — that was about not altering training labels (period
-      spelling is genuine, not an error); this would be correcting the
-      model's *predictions* at inference time, a different scope. Needs
-      the usual gate before adopting (validate on the 120-row val sample
-      first, watch for it over-correcting genuinely-correct unusual
-      tokens - the same risk already flagged for the LM fusion). Possible
-      source when implemented: Nguyen et al. 2021, "Survey of Post-OCR
-      Processing Approaches" (ACM Computing Surveys).
+- [x] Pick a final winner (residual+aug+elastic CRNN with beam+LM
+      decoding, 0.826) and wire it into `src/` - see Progress. TrOCR
+      fine-tuning stays paused/not chosen (never beat the CRNN even
+      zero-shot-adjacent; see the 2026-08-02 Progress entries).
+- [x] **Heuristic post-processing / domain rules on decoded predictions**
+      (`notebooks/09_catastrophic_error_analysis.ipynb`) — tried both a
+      character-level confusion scan and a word-level lexicon correction,
+      both negative/inconclusive, see Progress. Not adopted; reference
+      pipeline stays at 0.826.
+- [x] **Deep ensemble of 3 CRNNs + `ReduceLROnPlateau`**
+      (`notebooks/10_ensemble.ipynb`) — `score = 0.8409` on val,
+      `0.845943042` on the Zindi leaderboard, **new best pipeline**, see
+      Progress.
+- [ ] The ensemble's decode logic (`ensemble_decode_batch`, averaging
+      output probabilities across the 3 checkpoints) only exists in
+      `notebooks/10_ensemble.ipynb` and the one-off script that generated
+      the real submission — not yet graduated into `src/model.py` with a
+      unit test, unlike the single-model pipeline. `src/train.py::main()`
+      and `generate_submission()` still target the single-model recipe.
