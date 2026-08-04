@@ -1,5 +1,3 @@
-![Sample predictions: CRNN (residual blocks + augmentation + elastic distortion) + beam search + n-gram LM](demo_comparison.png)
-
 # Barbados Road Challenge (Zindi)
 
 OCR competition: transcribe handwritten lines from historical Barbados
@@ -28,6 +26,8 @@ Three candidate approaches ship in `reference/starter_pack/`: VLM
 (Qwen2-VL, LoRA fine-tune), PaddleOCR, Kraken-OCR. None chosen yet —
 compare them in a notebook against `src/evaluate.py::combined_score`
 before wiring one into `src/model.py`.
+
+![Sample predictions: CRNN (residual blocks + augmentation + elastic distortion) + beam search + n-gram LM](demo_comparison.png)
 
 ## Progress
 
