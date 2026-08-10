@@ -121,6 +121,14 @@
   - train several copies of the winning `CRNNResidual` recipe from different
     random seeds and average their output probabilities before decoding,
     rather than ensembling architecturally different or much-weaker models.
+- **Hu, E. J. et al. (2021). LoRA: Low-Rank Adaptation of Large Language
+  Models.** (https://arxiv.org/abs/2106.09685)
+  Why: source for the LoRA adapters (via `peft`) trained on TrOCR's decoder
+  attention projections in `notebooks/06_trocr_finetune.ipynb`, resumed
+  2026-08-10 after full fine-tuning was dropped for destabilizing the
+  pretrained weights. Result: plateaued at `score = 0.609`, still far
+  below the CRNN ensemble — negative, final result for this project's
+  TrOCR attempts (see README Progress).
 
 ## Libraries
 

@@ -3,6 +3,9 @@
 OCR competition: transcribe handwritten lines from historical Barbados
 documents. 4,098 train lines / 1,374 test lines, `ID,Target` format.
 
+**Project status: closed (2026-08-10).** No further experiment ideas
+remain — see Progress for the final TrOCR LoRA result and closing note.
+
 **Current best pipeline:** a 3-model deep ensemble (Lakshminarayanan et
 al. 2017) of the CRNN (residual blocks + data augmentation + elastic
 distortion) recipe — the original checkpoint plus two more seeds trained
@@ -516,6 +519,34 @@ before wiring one into `src/model.py`.
   which happened across separate notebook runs with different epoch
   budgets and isn't a single scripted loop.
 
+- 2026-08-10: **TrOCR fine-tuning via LoRA (`peft`), the paused
+  `notebooks/06_trocr_finetune.ipynb` attempt resumed — negative, final
+  result.** Rather than full fine-tuning (dropped 2026-08-02, destabilized
+  the pretrained weights: 1-epoch smoke test gave `score = 0.122`, worse
+  than zero-shot), only LoRA adapters on the decoder's attention
+  projections were trained, per the freeze-vs-LoRA plan from 2026-08-02
+  (Hu et al. 2021 — see RESOURCES.md). Trained 29 epochs on the full fit
+  split. **Result: val score plateaus around 0.58-0.61**, peaking at
+  `score = 0.609` (epoch 25), then drifting down to `0.587` by epoch 29
+  with no further gains (train loss still dropping smoothly, 4.976 ->
+  1.634 — the gap is a generalization ceiling, not an undertrained model).
+  Still far below the single-model CRNN (0.826) and the current best
+  ensemble (0.8409 val / 0.845943 leaderboard). Confirms the failure mode
+  already suspected in the 2026-08-02 zero-shot check: TrOCR's
+  RoBERTa-initialized decoder carries a strong modern-English prior that
+  partial (LoRA) adaptation still can't fully overcome with only 3,280
+  training lines, even though LoRA avoided full fine-tuning's outright
+  collapse. **Not adopted — TrOCR (both full fine-tuning and LoRA) is now
+  closed out as a dead end for this dataset size.**
+
+- 2026-08-10: **Project closed.** With TrOCR (full FT and LoRA) and
+  heuristic post-processing both exhausted as negative results, and no
+  further experiment ideas remaining, the project stops at its current
+  best: the 3-model CRNN deep ensemble (residual blocks + augmentation +
+  elastic distortion + beam search/n-gram LM decoding), `score = 0.8409`
+  on the 120-row val sample, `0.845943042` on the Zindi leaderboard,
+  already graduated to `src/` and submitted to the competition.
+
 ## Next steps
 
 - [x] Download the competition's image archive from Zindi's Data page into
@@ -549,9 +580,11 @@ before wiring one into `src/model.py`.
       environment rollback, not worth revisiting); VLM/Qwen2-VL LoRA
       dropped too (bigger investment, no zero-shot signal collected to
       justify it over TrOCR)
-- [ ] Fine-tune TrOCR (`microsoft/trocr-base-handwritten`) on the fit
-      split, compare on the same 120-row val sample against the CRNN's
-      0.702 — in progress, `notebooks/06_trocr_finetune.ipynb`
+- [x] Fine-tune TrOCR (`microsoft/trocr-base-handwritten`) on the fit
+      split, compare on the same 120-row val sample against the CRNN —
+      full fine-tuning dropped early (destabilized pretrained weights,
+      `score = 0.122`); LoRA (`peft`) tried instead, plateaued at
+      `score = 0.609` (epoch 25/29) — both negative, see Progress
 - [x] Three isolated CRNN architecture ablations
       (`notebooks/07_crnn_architecture_variants.ipynb`, see RESOURCES.md):
       stride=2 (0.633, negative), BiGRU (0.696, negative — doesn't clear
@@ -599,3 +632,7 @@ before wiring one into `src/model.py`.
       single-model recipe (0.826) by design — it documents/reproduces the
       base member, not the ensemble-training procedure (3 notebook runs
       with different seeds/epoch budgets, not a single scripted loop).
+- [x] **Project closed** — no further experiment ideas remain (TrOCR full
+      FT/LoRA and heuristic post-processing both closed out as negative).
+      Final pipeline: 3-model CRNN deep ensemble, `score = 0.8409` val /
+      `0.845943042` Zindi leaderboard, see Progress.
