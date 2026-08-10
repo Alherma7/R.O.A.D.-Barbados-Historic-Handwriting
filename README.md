@@ -500,6 +500,22 @@ before wiring one into `src/model.py`.
     score (0.8409, within ~0.005), same confirmation pattern as the first
     submission: the session's methodology generalizes to unseen data.
 
+- **Graduated the ensemble decode logic to `src/`.** `ensemble_decode_batch`/
+  `ensemble_predict` added to `src/model.py` (same averaging-probabilities
+  approach as `notebooks/10_ensemble.ipynb`, generalized to a `models: list`
+  param instead of 3 hardcoded variables); `generate_ensemble_submission()`
+  added to `src/train.py` alongside the existing single-model
+  `generate_submission()`, sharing a new `_load_checkpoint_model()` helper
+  to avoid duplicating the checkpoint-loading code across both. 2 new unit
+  tests in `tests/test_model.py` (ensemble of 1 model matches
+  `beam_decode_batch`; 2 disagreeing stub models decode the exact averaged
+  probability distribution, checked against an independently computed
+  expected value). `src/train.py::main()` intentionally still targets the
+  single-model recipe (0.826) — it documents/reproduces one ensemble
+  member's training procedure, not the full 3-seed ensembling process,
+  which happened across separate notebook runs with different epoch
+  budgets and isn't a single scripted loop.
+
 ## Next steps
 
 - [x] Download the competition's image archive from Zindi's Data page into
@@ -574,9 +590,12 @@ before wiring one into `src/model.py`.
       (`notebooks/10_ensemble.ipynb`) — `score = 0.8409` on val,
       `0.845943042` on the Zindi leaderboard, **new best pipeline**, see
       Progress.
-- [ ] The ensemble's decode logic (`ensemble_decode_batch`, averaging
-      output probabilities across the 3 checkpoints) only exists in
-      `notebooks/10_ensemble.ipynb` and the one-off script that generated
-      the real submission — not yet graduated into `src/model.py` with a
-      unit test, unlike the single-model pipeline. `src/train.py::main()`
-      and `generate_submission()` still target the single-model recipe.
+- [x] Graduate the ensemble's decode logic into `src/`:
+      `ensemble_decode_batch`/`ensemble_predict` in `src/model.py`,
+      `generate_ensemble_submission()` in `src/train.py` (loads the 3
+      `ENSEMBLE_CHECKPOINT_NAMES` checkpoints, mirrors
+      `generate_submission()`'s single-model path), 2 new unit tests in
+      `tests/test_model.py`. `src/train.py::main()` still targets the
+      single-model recipe (0.826) by design — it documents/reproduces the
+      base member, not the ensemble-training procedure (3 notebook runs
+      with different seeds/epoch budgets, not a single scripted loop).

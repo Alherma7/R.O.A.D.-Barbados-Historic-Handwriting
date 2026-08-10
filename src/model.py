@@ -208,6 +208,69 @@ def beam_decode_batch(
     ]
 
 
+def ensemble_decode_batch(
+    imgs,
+    input_lengths,
+    models: list[nn.Module],
+    idx_to_char: dict[int, str],
+    blank: int = 0,
+    beam_width: int = 10,
+    lm: "CharNgramLM | None" = None,
+    alpha: float = 0.0,
+) -> list[str]:
+    """Averages softmax probabilities across independently-trained models
+    (Lakshminarayanan, Pritzel & Blundell 2017 - see RESOURCES.md) before
+    beam-search decoding, rather than voting on each model's own decoded
+    text - keeps the ensemble's combined uncertainty available to the LM
+    fusion step instead of collapsing it to hard per-model outputs first.
+    Validated in notebooks/10_ensemble.ipynb (0.8409 val, 0.845943 Zindi
+    leaderboard for the 3-model `crnn_residual_aug_elastic` ensemble). All
+    `models` must share the same `idx_to_char` mapping, or averaging their
+    output indices is meaningless."""
+    probs_sum = None
+    with torch.no_grad():
+        for m in models:
+            log_probs = m(imgs)
+            probs = log_probs.exp()
+            probs_sum = probs if probs_sum is None else probs_sum + probs
+    avg_log_probs = (probs_sum / len(models)).clamp_min(1e-12).log().cpu()
+    return [
+        beam_search_decode(
+            avg_log_probs[b], input_lengths[b], idx_to_char, blank=blank, beam_width=beam_width, lm=lm, alpha=alpha
+        )
+        for b in range(avg_log_probs.size(0))
+    ]
+
+
+def ensemble_predict(
+    models: list[nn.Module],
+    dataloader,
+    idx_to_char: dict[int, str],
+    device,
+    blank: int = 0,
+    beam_width: int = 10,
+    lm: "CharNgramLM | None" = None,
+    alpha: float = 0.0,
+) -> tuple[list[str], list[str], list[str | None]]:
+    """Ensemble counterpart to `predict()`: runs every model in `models` over
+    each batch and decodes the averaged probabilities via
+    `ensemble_decode_batch`. Returns (ids, hypotheses, references) aligned
+    1:1, `references` entries None for rows with no Target (Test.csv)."""
+    for m in models:
+        m.eval()
+    all_ids, all_hyps, all_refs = [], [], []
+    with torch.no_grad():
+        for imgs, _targets_cat, input_lengths, _target_lengths, ids, texts in dataloader:
+            imgs = imgs.to(device)
+            hyps = ensemble_decode_batch(
+                imgs, input_lengths, models, idx_to_char, blank=blank, beam_width=beam_width, lm=lm, alpha=alpha
+            )
+            all_ids.extend(ids)
+            all_hyps.extend(hyps)
+            all_refs.extend(texts)
+    return all_ids, all_hyps, all_refs
+
+
 def predict(
     model: nn.Module,
     dataloader,

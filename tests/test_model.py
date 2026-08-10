@@ -1,7 +1,8 @@
 import torch
+import torch.nn as nn
 
 from src.features import ctc_output_length
-from src.model import CharNgramLM, CRNNResidual, beam_search_decode, greedy_decode
+from src.model import CharNgramLM, CRNNResidual, beam_decode_batch, beam_search_decode, ensemble_decode_batch, greedy_decode
 
 IDX_TO_CHAR = {1: "a", 2: "b"}
 BLANK = 0
@@ -93,3 +94,45 @@ def test_char_ngram_lm_prefers_seen_continuations():
     # After context "aa", 'b' was seen every time - it should score higher
     # than a character that never followed "aa" in training.
     assert lm.get_log_prob("b", "aa") > lm.get_log_prob("z", "aa")
+
+
+class _StubModel(nn.Module):
+    """Returns a fixed log_probs tensor regardless of input - stands in for
+    a trained CRNNResidual so ensemble_decode_batch's averaging logic can be
+    tested without running real training."""
+
+    def __init__(self, log_probs):
+        super().__init__()
+        self._log_probs = log_probs
+
+    def forward(self, x):
+        return self._log_probs
+
+
+def test_ensemble_decode_batch_with_one_model_matches_beam_decode_batch():
+    log_probs = _one_hot_log_probs([1, 1, BLANK, 1]).unsqueeze(0)
+    models = [_StubModel(log_probs)]
+
+    ensemble_out = ensemble_decode_batch(
+        torch.zeros(1), input_lengths=[4], models=models, idx_to_char=IDX_TO_CHAR, blank=BLANK, beam_width=5
+    )
+    single_out = beam_decode_batch(log_probs, [4], IDX_TO_CHAR, blank=BLANK, beam_width=5)
+
+    assert ensemble_out == single_out
+
+
+def test_ensemble_decode_batch_averages_probabilities_before_decoding():
+    # Two members confidently disagree on every timestep (path a,a,blank,a
+    # vs. b,b,blank,b) - the ensemble must decode the averaged probability
+    # distribution, not either member's own decode nor a vote between them.
+    log_probs_a = _one_hot_log_probs([1, 1, BLANK, 1]).unsqueeze(0)
+    log_probs_b = _one_hot_log_probs([2, 2, BLANK, 2]).unsqueeze(0)
+    models = [_StubModel(log_probs_a), _StubModel(log_probs_b)]
+
+    out = ensemble_decode_batch(
+        torch.zeros(1), input_lengths=[4], models=models, idx_to_char=IDX_TO_CHAR, blank=BLANK, beam_width=5
+    )
+
+    avg_log_probs = ((log_probs_a.exp() + log_probs_b.exp()) / 2).clamp_min(1e-12).log()
+    expected = beam_search_decode(avg_log_probs[0], 4, IDX_TO_CHAR, blank=BLANK, beam_width=5)
+    assert out == [expected]

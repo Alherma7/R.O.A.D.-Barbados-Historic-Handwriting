@@ -27,7 +27,7 @@ from src.config import ID_COLUMN, MODELS_DIR, RANDOM_STATE, TARGET_COLUMN
 from src.data import load_raw_data, save_output, split_train_val
 from src.evaluate import combined_score
 from src.features import AugmentedLineDataset, LineDataset, build_vocab, collate_lines
-from src.model import CRNNResidual, CharNgramLM, greedy_decode, predict
+from src.model import CRNNResidual, CharNgramLM, ensemble_predict, greedy_decode, predict
 
 DROPOUT = 0.2
 WEIGHT_DECAY = 1e-4
@@ -40,6 +40,15 @@ LM_K = 1e-3
 BEAM_WIDTH = 10
 LM_ALPHA = 0.35
 CHECKPOINT_NAME = "crnn_residual_aug_elastic.pt"
+# 3-model deep ensemble (Lakshminarayanan et al. 2017, see RESOURCES.md) -
+# same recipe as CHECKPOINT_NAME, only the training seed differs (43, 44 -
+# see notebooks/10_ensemble.ipynb). Reference score: 0.8409 val, 0.845943
+# Zindi leaderboard.
+ENSEMBLE_CHECKPOINT_NAMES = (
+    CHECKPOINT_NAME,
+    "crnn_residual_aug_elastic_seed43.pt",
+    "crnn_residual_aug_elastic_seed44.pt",
+)
 
 
 def _evaluate_greedy(model, loader, idx_to_char, device) -> dict:
@@ -154,6 +163,15 @@ def main() -> None:
     )
 
 
+def _load_checkpoint_model(checkpoint_path, device) -> tuple[CRNNResidual, dict[int, str]]:
+    """Builds a `CRNNResidual` and loads one saved checkpoint's weights."""
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    char_to_idx, idx_to_char = checkpoint["char_to_idx"], checkpoint["idx_to_char"]
+    model = CRNNResidual(len(char_to_idx) + 1, dropout=DROPOUT).to(device)
+    model.load_state_dict(checkpoint["model_state_dict"])
+    return model, idx_to_char
+
+
 def generate_submission(checkpoint_path=None, output_filename: str = "submission.csv"):
     """Inference-only entry point: loads an already-trained checkpoint and
     decodes Test.csv with the project's default beam+LM pipeline - no
@@ -162,12 +180,7 @@ def generate_submission(checkpoint_path=None, output_filename: str = "submission
     0.82658842)."""
     checkpoint_path = checkpoint_path or (MODELS_DIR / CHECKPOINT_NAME)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    checkpoint = torch.load(checkpoint_path, map_location=device)
-    char_to_idx, idx_to_char = checkpoint["char_to_idx"], checkpoint["idx_to_char"]
-    num_classes = len(char_to_idx) + 1
-
-    model = CRNNResidual(num_classes, dropout=DROPOUT).to(device)
-    model.load_state_dict(checkpoint["model_state_dict"])
+    model, idx_to_char = _load_checkpoint_model(checkpoint_path, device)
 
     train_df = load_raw_data("train")
     fit_df, _val_df = split_train_val(train_df)
@@ -179,6 +192,39 @@ def generate_submission(checkpoint_path=None, output_filename: str = "submission
 
     ids, hyps, _refs = predict(
         model, test_dl, idx_to_char, device, blank=BLANK, beam_width=BEAM_WIDTH, lm=lm, alpha=LM_ALPHA
+    )
+    submission = pd.DataFrame({ID_COLUMN: ids, TARGET_COLUMN: hyps})
+    return save_output(submission, output_filename)
+
+
+def generate_ensemble_submission(checkpoint_paths=None, output_filename: str = "submission_ensemble.csv"):
+    """Inference-only entry point for the 3-model deep ensemble: loads every
+    checkpoint in `checkpoint_paths`, averages their output probabilities
+    per `ensemble_decode_batch` (Lakshminarayanan et al. 2017), and decodes
+    Test.csv - no retraining. Mirrors the Zindi submission generated via
+    notebooks/10_ensemble.ipynb (leaderboard score 0.845943042)."""
+    checkpoint_paths = checkpoint_paths or [MODELS_DIR / name for name in ENSEMBLE_CHECKPOINT_NAMES]
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    models, idx_to_chars = [], []
+    for checkpoint_path in checkpoint_paths:
+        model, idx_to_char = _load_checkpoint_model(checkpoint_path, device)
+        models.append(model)
+        idx_to_chars.append(idx_to_char)
+    if any(m != idx_to_chars[0] for m in idx_to_chars[1:]):
+        raise ValueError("Ensemble members must share the same char<->index mapping")
+    idx_to_char = idx_to_chars[0]
+
+    train_df = load_raw_data("train")
+    fit_df, _val_df = split_train_val(train_df)
+    lm = CharNgramLM(fit_df[TARGET_COLUMN].tolist(), n=LM_N, k=LM_K)
+
+    test_df = load_raw_data("test")
+    test_ds = LineDataset(test_df, char_to_idx=None)
+    test_dl = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False, collate_fn=collate_lines)
+
+    ids, hyps, _refs = ensemble_predict(
+        models, test_dl, idx_to_char, device, blank=BLANK, beam_width=BEAM_WIDTH, lm=lm, alpha=LM_ALPHA
     )
     submission = pd.DataFrame({ID_COLUMN: ids, TARGET_COLUMN: hyps})
     return save_output(submission, output_filename)
