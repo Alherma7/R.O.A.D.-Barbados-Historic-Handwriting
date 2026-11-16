@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>R.O.A.D. Barbados Retrospective</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Retrospective of a handwriting recognition model for Zindi's R.O.A.D. Barbados Historic Handwriting Challenge: what worked, where we went wrong, what we never tried, and decision rules for the next project.">
+<style>
+  /* Layout: one 860px reading column, tables and bar lists as the only figures (same system as the RSNA Knee retrospective). */
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface-1: #fcfcfb;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --grid: #e1e0d9;
+    --border: rgba(11,11,11,0.10);
+    --series-1: #2a78d6; /* blue: this project */
+    --series-2: #eb6834; /* orange: other teams */
+    --good: #006300;
+    --code-bg: #f0efec;
+    --on-pill: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface-1: #1a1a19;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #898781;
+      --grid: #2c2c2a;
+      --border: rgba(255,255,255,0.10);
+      --series-1: #3987e5;
+      --series-2: #d95926;
+      --good: #0ca30c;
+      --code-bg: #202020;
+      --on-pill: #ffffff;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface-1: #1a1a19;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --grid: #2c2c2a;
+    --border: rgba(255,255,255,0.10);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --good: #0ca30c;
+    --code-bg: #202020;
+    --on-pill: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.55;
+  }
+  main {
+    max-width: 860px;
+    margin: 0 auto;
+    padding-block: 32px 80px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  h1 { font-size: 1.7rem; margin-bottom: 0.2em; text-wrap: balance; }
+  h2 { font-size: 1.3rem; margin-top: 2.6em; border-top: 1px solid var(--grid); padding-top: 1em; text-wrap: balance; }
+  h3 { font-size: 1.05rem; margin-top: 1.8em; color: var(--text-primary); text-wrap: balance; }
+  p, li { color: var(--text-secondary); }
+  a { color: var(--series-1); overflow-wrap: anywhere; }
+  code, pre {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: var(--code-bg);
+    border-radius: 4px;
+  }
+  code { padding: 0.1em 0.35em; font-size: 0.92em; }
+  .subtitle { color: var(--text-secondary); font-size: 1.05rem; }
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin: 1.2em 0;
+  }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; margin: 1em 0; font-size: 0.92rem; }
+  th, td {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--grid);
+    color: var(--text-secondary);
+    vertical-align: top;
+  }
+  th { color: var(--text-primary); font-weight: 600; }
+  td:first-child, th:first-child { color: var(--text-primary); }
+  .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .hero-table td, .hero-table th { border: none; padding: 6px 14px 6px 0; }
+  .hero-value { font-size: 1.35rem; font-weight: 700; color: var(--text-primary); }
+  .hero-table .num { white-space: normal; }
+  .pending { color: var(--text-muted); font-weight: 600; font-size: 1rem; }
+  .pill {
+    display: inline-block;
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    color: var(--on-pill);
+    white-space: nowrap;
+  }
+  .pill-reject { background: var(--series-2); }
+  .pill-accept { background: var(--good); }
+  .pill-near { background: var(--text-muted); }
+  .legend { display: flex; flex-wrap: wrap; gap: 20px; font-size: 0.85rem; color: var(--text-secondary); margin: 10px 0; }
+  .legend .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  .bar-list { margin: 1.2em 0; }
+  .bar-row { margin-bottom: 14px; }
+  .bar-row .label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.88rem;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+    gap: 12px;
+  }
+  .bar-row .label .val { color: var(--text-secondary); font-variant-numeric: tabular-nums; flex: none; }
+  .bar-track { background: var(--grid); border-radius: 4px; height: 20px; width: 100%; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 0 4px 4px 0; background: var(--series-2); }
+  .bar-fill.us { background: var(--series-1); }
+  .pipeline { display: flex; flex-direction: column; margin: 1.4em 0; }
+  .pstep {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--series-1);
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+  }
+  .pstep b { color: var(--text-primary); }
+  .parrow { text-align: center; color: var(--text-muted); font-size: 1rem; padding: 2px 0; }
+  .transcript {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: var(--code-bg);
+    border-radius: 6px;
+    padding: 10px 12px;
+    overflow-x: auto;
+    white-space: nowrap;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+  }
+  footer { margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--grid); font-size: 0.85rem; color: var(--text-muted); }
+  .toc { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.88rem; margin: 1em 0 0; }
+  .note { font-size: 0.85rem; color: var(--text-muted); }
+</style>
+</head>
+<body>
+<main>
+
+<h1>R.O.A.D. Barbados Historic Handwriting</h1>
+<p class="subtitle">A from-scratch CRNN that reached 0.846 in ten days, and why the winners
+got to 0.93 with the two approaches the organisers' own starter pack recommended and we
+never ran.</p>
+<p>Built for Zindi's
+<a href="https://zindi.world/competitions/road-barbados-historic-handwriting-challenge">R.O.A.D. Barbados Historic Handwriting Challenge</a>
+(2026), open Jul 3 – Oct 4.
+Source: <a href="https://github.com/Alherma7/R.O.A.D.-Barbados-Historic-Handwriting">github.com/Alherma7/R.O.A.D.-Barbados-Historic-Handwriting</a>.</p>
+
+<nav class="toc">
+  <a href="#problem">The problem</a>
+  <a href="#results">Results</a>
+  <a href="#model">Final model</a>
+  <a href="#worked">What worked</a>
+  <a href="#didnt">What didn't</a>
+  <a href="#finding">The key finding</a>
+  <a href="#wrong">Where we went wrong</a>
+  <a href="#untried">What we never tried</a>
+  <a href="#top">Vs. the top finishers</a>
+  <a href="#ocr">Handwriting OCR: what transfers</a>
+  <a href="#lessons">Lessons</a>
+  <a href="#future">Future: a rerun</a>
+</nav>
+
+<h2 id="problem">The problem</h2>
+<p>Transcribe one handwritten line per image from 17th–19th century Barbados deeds and
+registers. There are 4,098 labelled training lines and 1,374 test lines, in
+<code>ID,Target</code> format. The score mixes word and character edit distance:</p>
+<p class="transcript">score = 1 − 0.5 × (W / 12 + C / 55)</p>
+<p>W and C are the mean word and character edits per line. One wrong word costs about as
+much as 4.6 wrong characters, and getting one more word right on every line is worth about
+0.04. Capitals, punctuation and the <code>^</code> superscript convention
+(<code>Exec^rs</code>, <code>ad^rs</code>) all count.</p>
+<p>Three facts shaped the competition:</p>
+<ul>
+  <li><b>Old spellings are the target.</b> <code>prsents</code>, <code>coveniet</code>,
+    <code>Conteyneing</code>, <code>theis</code>: the transcript keeps what the clerk wrote.
+    A model with a modern-English prior "corrects" these and loses points.</li>
+  <li><b>Two populations of image.</b> About 75% of lines are clean register copies around
+    50 px tall. About 25% are large, stained or faded originals, up to 1,131 px tall and 6,051 px
+    wide. Early models in the 26th-place write-up scored 0.892 on the first and 0.826 on the
+    second.</li>
+  <li><b>The labels have a ceiling.</b> Where two independent models agreed exactly (1,875 lines),
+    the agreed text still scored only about 0.945 against the labels. The rest is annotator
+    inconsistency: <code>said</code>/<code>Said</code>, a missing <code>^</code>, a comma.</li>
+</ul>
+<p>The organisers shipped a starter pack with three approaches: a vision-language model
+(Qwen2-VL-2B with LoRA, labelled "highest OCR accuracy"), Kraken ("historical and challenging
+documents") and PaddleOCR.</p>
+
+<h2 id="results">Results</h2>
+<div class="card">
+<table class="hero-table">
+  <tr><td>Public score</td><td class="hero-value num">0.846 <span class="note">(1st: 0.933 private)</span></td></tr>
+  <tr><td>Submissions used</td><td class="hero-value num">2</td></tr>
+  <tr><td>Active period</td><td class="hero-value num">Aug 1 – Aug 10 <span class="note">(stopped 8 weeks before the close: "no further experiment ideas remain")</span></td></tr>
+</table>
+</div>
+
+<p>Every step on the way was a single, isolated change, scored on the same 120 held-out lines:</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Date</th><th>Change</th><th class="num">Val (120 lines)</th><th class="num">Public LB</th></tr></thead>
+  <tbody>
+    <tr><td class="num">Aug 1</td><td>CRNN (CNN + BiLSTM + CTC) from scratch, 32 px line height</td><td class="num">0.568</td><td></td></tr>
+    <tr><td class="num">Aug 2</td><td>Dropout + AdamW + early stopping, then a continuation run</td><td class="num">0.702</td><td></td></tr>
+    <tr><td class="num">Aug 3</td><td>Residual blocks in each CNN stage</td><td class="num">0.720</td><td></td></tr>
+    <tr><td class="num">Aug 3</td><td>Rotation, brightness, contrast and noise augmentation</td><td class="num">0.769</td><td></td></tr>
+    <tr><td class="num">Aug 3</td><td>Elastic distortion</td><td class="num">0.796</td><td></td></tr>
+    <tr><td class="num">Aug 3</td><td>CTC beam search + character 4-gram LM (α = 0.35)</td><td class="num">0.826</td><td class="num">0.8266</td></tr>
+    <tr><td class="num">Aug 4</td><td>3 seeds, averaged probabilities before decoding</td><td class="num">0.841</td><td class="num">0.8459</td></tr>
+  </tbody>
+</table>
+</div>
+<p class="note">The local score tracked the leaderboard closely both times (within 0.0003 and
+0.005), so the harness was sound. What it could not do was see past the model family it was
+measuring.</p>
+
+<h3>Where 0.846 sits</h3>
+<p>The axis starts at 0.5. The two other teams' bars are private scores; ours is the public
+score. For the 26th place the two differed by 0.005.</p>
+<div class="legend" aria-hidden="true">
+  <span><span class="swatch" style="background:var(--series-1)"></span>This project</span>
+  <span><span class="swatch" style="background:var(--series-2)"></span>Other teams</span>
+</div>
+<div class="bar-list" role="img" aria-label="Leaderboard scores: 1st place 0.933 private; about 26th place 0.926 private; this project 0.846 public. Axis from 0.5 to 1.0.">
+  <div class="bar-row"><div class="label"><span>1st, Brainiac: 8 readers, 5 model families, weighted vote</span><span class="val">0.933</span></div><div class="bar-track"><div class="bar-fill" style="width:86.6%"></div></div></div>
+  <div class="bar-row"><div class="label"><span>~26th, solo: Qwen3-VL + CTC + TrOCR, MBR vote</span><span class="val">0.926</span></div><div class="bar-track"><div class="bar-fill" style="width:85.2%"></div></div></div>
+  <div class="bar-row"><div class="label"><span>This project (public)</span><span class="val">0.846</span></div><div class="bar-track"><div class="bar-fill us" style="width:69.2%"></div></div></div>
+</div>
+<p>The gap is about 0.087, roughly two words per line. In the winner's arithmetic, one word saved
+on every line is worth 0.04.</p>
+
+<h2 id="model">The final model</h2>
+<div class="pipeline">
+  <div class="pstep"><b>1. Split.</b> One fixed fit/val split, grouped on exact transcript text so
+    the 10 repeated legal formulas cannot leak. Validation on a fixed 120-line sample.</div>
+  <div class="parrow">↓</div>
+  <div class="pstep"><b>2. Input.</b> Grayscale, resized to 32 px high, width capped at 1,024 px,
+    normalised to [−1, 1]. Training adds rotation (±3°), brightness, contrast, Gaussian noise and
+    elastic distortion.</div>
+  <div class="parrow">↓</div>
+  <div class="pstep"><b>3. Model.</b> A CRNN trained from scratch: CNN with residual blocks,
+    2-layer BiLSTM, CTC loss. Dropout, AdamW, early stopping, <code>ReduceLROnPlateau</code>.</div>
+  <div class="parrow">↓</div>
+  <div class="pstep"><b>4. Ensemble.</b> Three seeds of the same recipe. Their per-frame
+    probabilities are averaged before decoding.</div>
+  <div class="parrow">↓</div>
+  <div class="pstep"><b>5. Decode.</b> CTC prefix beam search (width 10), written and unit-tested
+    from scratch, fused with a character 4-gram LM built from the training transcripts.</div>
+</div>
+
+<h2 id="worked">What worked</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Change</th><th>Measured effect</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td>Augmentation (rotation, photometric, noise)</td><td class="num">0.720 → 0.769</td><td>The largest single gain. Train loss went up and validation improved: a regulariser on 3,280 lines</td></tr>
+    <tr><td>Character n-gram LM inside the CTC beam</td><td class="num">0.796 → 0.826</td><td>Built only from training transcripts, so it learned period spellings. Stable over α 0.2–0.5. The winner did the same inside Kraken</td></tr>
+    <tr><td>Elastic distortion</td><td class="num">0.769 → 0.796</td><td>The first run that early-stopped cleanly</td></tr>
+    <tr><td>Residual blocks</td><td class="num">0.702 → 0.720</td><td>One of three isolated architecture ablations; the other two lost</td></tr>
+    <tr><td>3-seed probability averaging</td><td class="num">0.826 → 0.841 (LB +0.019)</td><td>Averaging before the beam keeps CTC alignment intact</td></tr>
+    <tr><td>Using the official metric</td><td>fixed on day 1</td><td>The starter pack's <code>0.7·CER + 0.3·WER</code> was wrong. Staff confirmed the real formula on the forum, and every earlier number was recomputed</td></tr>
+    <tr><td>Never normalising the labels</td><td>a reverted fix</td><td>A <code>prsence</code> → <code>presence</code> "typo fix" was undone after a second look at the image. The winner also trained on the original transcripts unchanged</td></tr>
+  </tbody>
+</table>
+</div>
+<p>The working discipline held up. Every change had a before/after number, the metric was
+pinned before any comparison, the beam search was checked against brute-force CTC scores before
+it touched real data, and 31 unit tests covered <code>src/</code>. The discipline was fine. The
+problem was what it was pointed at.</p>
+
+<h2 id="didnt">What didn't work</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Approach</th><th>Result</th><th>Verdict</th><th>Why it failed</th></tr></thead>
+  <tbody>
+    <tr><td>Zero-shot PaddleOCR (8 lines)</td><td class="num">0.393</td><td><span class="pill pill-reject">dropped</span></td><td>Character noise on cursive</td></tr>
+    <tr><td>Zero-shot TrOCR-base (8 lines)</td><td class="num">0.382</td><td><span class="pill pill-reject">dropped</span></td><td>Fluent modern English that was not on the page</td></tr>
+    <tr><td>TrOCR full fine-tune</td><td class="num">0.122 after 1 epoch</td><td><span class="pill pill-reject">dropped</span></td><td>Judged from a one-epoch smoke test. The 26th place got 0.878 from TrOCR-large</td></tr>
+    <tr><td>TrOCR LoRA on the decoder's attention</td><td class="num">0.609 (epoch 25)</td><td><span class="pill pill-reject">closed</span></td><td>Adapted the language side only. The top two found the vision side was what mattered</td></tr>
+    <tr><td>Stride-2 convolutions; BiGRU</td><td class="num">0.633; 0.696</td><td><span class="pill pill-reject">rejected</span></td><td>BiGRU was inside the noise of a 120-line sample</td></tr>
+    <tr><td>Cosine LR schedule</td><td class="num">−0.028</td><td><span class="pill pill-reject">rejected</span></td><td>Decayed before the model had finished learning</td></tr>
+    <tr><td>Beam search without an LM</td><td class="num">+0.001</td><td><span class="pill pill-near">noise</span></td><td>Only useful once an LM can reorder the beams</td></tr>
+    <tr><td>Lexicon "snap" to training vocabulary</td><td class="num">+0.0011–0.0015</td><td><span class="pill pill-reject">rejected</span></td><td>Broke correct rare names and spellings. The winner's dictionary snapping and rare-word specialists failed the same way</td></tr>
+    <tr><td>Kraken</td><td>never ran</td><td><span class="pill pill-near">abandoned</span></td><td>Installed into the shared <code>base</code> env, broke torch and numpy, rolled back</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="finding">The key finding: the model family was the competition</h2>
+<p>Both write-ups put most of the score on pretrained readers fine-tuned to read this
+handwriting, fused with CTC readers that keep the letters. The winner published the
+out-of-fold score of every reader on all 4,098 lines:</p>
+<div class="legend" aria-hidden="true">
+  <span><span class="swatch" style="background:var(--series-1)"></span>This project (120 lines)</span>
+  <span><span class="swatch" style="background:var(--series-2)"></span>1st place readers, out-of-fold on 4,098 lines</span>
+</div>
+<div class="bar-list" role="img" aria-label="Single-reader scores. 1st place out-of-fold: weighted vote 0.9306; Qwen3.5-9B nine views 0.9181; LightOnOCR-2 1B nine views 0.9169; Qwen3-VL-8B nine views 0.9166; Qwen3.5-9B single strip 0.9165; LightOnOCR-2 1B single strip 0.9143; Qwen3-VL-8B single strip 0.9141; Kraken with KenLM 0.9092; ConvNeXt-large CTC 0.8633. This project on 120 lines: CRNN 3-seed ensemble 0.841; TrOCR-base LoRA 0.609. Axis from 0.5 to 1.0.">
+  <div class="bar-row"><div class="label"><span>Weighted vote of all 8</span><span class="val">0.931</span></div><div class="bar-track"><div class="bar-fill" style="width:86.1%"></div></div></div>
+  <div class="bar-row"><div class="label"><span>Qwen3.5-9B, nine views (LoRA r32, vision + language)</span><span class="val">0.918</span></div><div class="bar-track"><div class="bar-fill" style="width:83.6%"></div></div></div>
+  <div class="bar-row"><div class="label"><span>LightOnOCR-2 1B, nine views (full fine-tune)</span><span class="val">0.917</span></div><div class="bar-track"><div class="bar-fill" style="width:83.4%"></div></div></div>
+  <div class="bar-row"><div class="label"><span>Qwen3-VL-8B, nine views</span><span class="val">0.917</span></div><div class="bar-track"><div class="bar-fill" style="width:83.3%"></div></div></div>
+  <div class="bar-row"><div class="label"><span>LightOnOCR-2 1B, single strip</span><span class="val">0.914</span></div><div class="bar-track"><div class="bar-fill" style="width:82.9%"></div></div></div>
+  <div class="bar-row"><div class="label"><span>Kraken + character KenLM (CTC)</span><span class="val">0.909</span></div><div class="bar-track"><div class="bar-fill" style="width:81.8%"></div></div></div>
+  <div class="bar-row"><div class="label"><span>ConvNeXt-large CTC, 128 px grey</span><span class="val">0.863</span></div><div class="bar-track"><div class="bar-fill" style="width:72.7%"></div></div></div>
+  <div class="bar-row"><div class="label"><span>Our CRNN (CTC), 3-seed ensemble, 32 px</span><span class="val">0.841</span></div><div class="bar-track"><div class="bar-fill us" style="width:68.2%"></div></div></div>
+  <div class="bar-row"><div class="label"><span>Our TrOCR-base, LoRA on decoder attention</span><span class="val">0.609</span></div><div class="bar-track"><div class="bar-fill us" style="width:21.8%"></div></div></div>
+</div>
+<p class="note">Our numbers are on 120 lines, theirs on 4,098 out-of-fold lines, so the
+comparison is approximate. The ranking is not in doubt. The 26th place reports the same
+pattern: Qwen3-VL-8B at 0.905, TrOCR-large at 0.878, a CTC reader at 0.816.</p>
+
+<p>Three things stand out.</p>
+<ul>
+  <li><b>Where the LoRA goes matters more than whether you use it.</b> The 26th place moved
+    Qwen3-VL from 0.869 to 0.905 by adding LoRA to the vision tower. The winner wrote that
+    "training the vision side mattered most". Our TrOCR LoRA adapted only the decoder's attention,
+    the part that holds the modern-English prior we were fighting, and left the encoder that reads
+    the ink frozen.</li>
+  <li><b>We generalised from one old model to a whole family.</b> TrOCR-base (2021, RoBERTa
+    decoder) failed, and the README concluded that "anything that has to learn or unlearn its own
+    language model" would fail on 3,280 lines. The starter pack's Qwen2-VL was then dropped for
+    "no zero-shot signal collected", a signal we never tried to collect.</li>
+  <li><b>Our own family had 0.07 of headroom.</b> Kraken is a CTC reader with a character LM,
+    the same design as our CRNN, and it scored 0.909 alone: within 0.01 of the VLMs. It trained
+    on word-span crops and a taller input, with a 6-gram LM. Even the winner's plain ConvNeXt
+    CTC at 128 px beat our 32 px CRNN by 0.02. The model family we chose was not the ceiling;
+    the input size and the training data were.</li>
+  <li><b>Our approach was what the winners also needed.</b> Kraken got the winner's largest vote
+    (12 of 47), and a CTC reader at 0.816 alone was the 26th place's most valuable member
+    (+0.0033 LB), because they keep old spellings that the VLMs modernise. What was missing was a
+    strong, different reader to vote against ours.</li>
+  <li><b>Small was enough.</b> LightOnOCR-2, a 1B model, scored 0.914 with a full fine-tune,
+    level with the 8B and 9B Qwen readers. Every reader the winner used is Apache-2.0
+    (Kraken adds LGPL-2.1).</li>
+</ul>
+<p>The winner's examples of the spelling problem, on lines left out of training:</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>On the page</th><th>4 of 6 VLMs read</th><th>Kraken + vote</th></tr></thead>
+  <tbody>
+    <tr><td><code>Sattisfaction</code></td><td><code>Satisfaction</code></td><td><code>Sattisfaction</code></td></tr>
+    <tr><td><code>hinderance</code></td><td><code>hindrance</code></td><td><code>hinderance</code></td></tr>
+    <tr><td><code>heires</code></td><td><code>heirs</code></td><td><code>heires</code></td></tr>
+    <tr><td><code>Wittness</code></td><td><code>Witness</code></td><td><code>Wittness</code></td></tr>
+  </tbody>
+</table>
+</div>
+<p>One held-out line shows the vote at work. On "the lett <code>troble</code> or molestacon",
+Qwen3-VL and LightOnOCR-2 (22 votes) read <code>trouble</code>. Qwen3.5, ConvNeXt and Kraken
+(23.8 votes; Kraken's 12 are spread over its 25 readings) read <code>troble</code>. The
+whole-line distance picked <code>troble</code>, 0.0296 against 0.0314, which matches the page.
+Without Kraken, <code>trouble</code> would have won.</p>
+<p>A VLM fine-tune is the strongest single reader and the one most likely to modernise. A CTC
+reader with a character LM keeps the letters. The vote needs both.</p>
+
+<h2 id="wrong">Where we went wrong</h2>
+<p>An audit of the decisions that set the ceiling, with what we knew at the time:</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Decision</th><th>What we knew then</th><th>What the top finishers did</th><th>Verdict</th></tr></thead>
+  <tbody>
+    <tr><td><b>Aug 2: drop the starter VLM (Qwen2-VL-2B LoRA) without running it</b></td><td>The organisers called it the most accurate approach and shipped a training script. The reason given was cost, and the absence of a zero-shot number we had not measured</td><td>Qwen3-VL-8B, Qwen3.5 and LightOnOCR-2 fine-tunes were the backbone of both write-ups</td><td><span class="pill pill-reject">biggest miss</span></td></tr>
+    <tr><td><b>Aug 2: kill TrOCR full fine-tuning after one epoch at 0.122</b></td><td>A one-epoch smoke test, no learning-rate check, default 384 × 384 input for lines with aspect ratios of 3–40</td><td>26th: TrOCR-large at 0.878 with a 192 × 1536 input; 0.850 with the square input</td><td><span class="pill pill-reject">smoke test read as a verdict</span></td></tr>
+    <tr><td><b>Aug 10: LoRA on TrOCR's decoder attention only</b></td><td>The failure looked like a language-prior problem, so we adapted the language side</td><td>LoRA on the vision tower: +0.036 for the 26th place; "mattered most" for the winner</td><td><span class="pill pill-reject">wrong half of the model</span></td></tr>
+    <tr><td><b>Install Kraken into <code>base</code></b></td><td>The starter pack's own <code>setup.sh</code> made one env per approach. We skipped it, broke torch and numpy, and never tested Kraken</td><td>Kraken + KenLM had the winner's largest vote (12 of 47)</td><td><span class="pill pill-reject">tooling cost a model</span></td></tr>
+    <tr><td><b>32 px input height, width capped at 1,024</b></td><td>EDA found heights from 28 to 1,131 px and noted that size tracks scan resolution, not text. 17 of 120 val lines held 47% of all edits</td><td>Winner: the whole line at 160 px high (3,232 × 160 in its example), close-up windows at 224–320 px, boundary models at 128 and 192 px for tall scans</td><td><span class="pill pill-near">found in EDA, not acted on</span></td></tr>
+    <tr><td><b>One 120-line validation sample</b></td><td>It tracked the leaderboard twice. The quoted noise floor (~0.001–0.002) came from decode-level comparisons on the same lines, not from resampling rows</td><td>Both used five-fold OOF on all 4,098 lines. 26th: "one fold (~820 lines) was too noisy"</td><td><span class="pill pill-near">sound, too small to rank close ideas</span></td></tr>
+    <tr><td><b>Ensemble = more seeds of one recipe</b></td><td>+0.0095 val, +0.019 LB. A real gain</td><td>26th: extra Qwen variants +0.0002, then +0.0000; a new model family +0.0011. Winner: 5 families, weighted by how much each one helps the vote</td><td><span class="pill pill-near">right gain, wrong axis to scale</span></td></tr>
+    <tr><td><b>Close on Aug 10: "no further experiment ideas remain"</b></td><td>Eight weeks left. Two starter-pack approaches untried</td><td>The 26th place was still adding to a 61-source candidate pool in September</td><td><span class="pill pill-reject">first of three early stops</span></td></tr>
+    <tr><td>Group the split by exact transcript</td><td>A random split leaked 3 of 10 duplicate groups</td><td>Winner: text duplicates and near-duplicate images in the same fold</td><td><span class="pill pill-accept">right, extend to images</span></td></tr>
+    <tr><td>Keep the labels as written; reject lexicon correction</td><td>The lexicon broke correct rare spellings</td><td>Winner: original transcripts; dictionary snapping and rare-word specialists both failed</td><td><span class="pill pill-accept">right</span></td></tr>
+    <tr><td>Character LM inside the CTC beam</td><td>+0.030, stable plateau</td><td>Winner: 6-gram KenLM inside Kraken only. An LM in a VLM, or for whole-line rescoring, made things worse</td><td><span class="pill pill-accept">right</span></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>"No ideas left" was a list we had not finished reading</h3>
+<p>The project closed on Aug 10 with two of the organisers' three recommended approaches never
+run, one because of an environment conflict and one because of a guess about cost. That is not
+an exhausted idea list; it is an unread one. The same pattern followed in the next two projects:
+Kaggriculture stopped on Sep 3 with its close on Sep 30, and RSNA Knee stopped on Sep 1 with its
+close on Oct 22. Barbados was the first.</p>
+
+<h3>The compute question</h3>
+<p>The winner trained on 4 × RTX A6000 (48 GB), up to 21 hours per fold for the largest reader.
+We trained on a laptop RTX 4060 with 8 GB. Part of the gap is compute, and that should be said.
+But the winner also wrote that Qwen3-VL-8B matched the 32B model and that bigger models did not
+win. Their 1B reader (LightOnOCR-2) scored 0.914, Kraken scored 0.909 as a CTC model, and the
+starter pack's own choice was a 2B model. A 1–2B reader, a better CTC reader, or an 8B one in
+4-bit on a rented 24–48 GB GPU, was within reach. We never priced it.</p>
+
+<h2 id="untried">What we never tried</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Idea</th><th>Where it sat</th><th>What the top finishers showed</th></tr></thead>
+  <tbody>
+    <tr><td><b>Fine-tune a VLM with LoRA in the vision tower</b></td><td>Starter pack, dropped unrun</td><td>Qwen3-VL-8B 0.905 OOF alone. Mergers trained in full at a lower LR (1e-5 vs 2e-4)</td></tr>
+    <tr><td><b>Fuse different families with a metric-aware vote</b></td><td>Never considered; we averaged seeds</td><td>Pick the candidate with the lowest weighted W/12 + C/55 distance to all readings (MBR). ROVER-style word splicing was slightly worse for the 26th place; the winner used it only to build candidates</td></tr>
+    <tr><td>Kraken + character KenLM</td><td>Starter pack, lost to the env rollback</td><td>Winner: beam 64, 25 readings, LM weight 0.8, the largest vote</td></tr>
+    <tr><td>Forced alignment for word positions</td><td>Never considered</td><td>A CTC reader aligns the known transcript to the image, which places every word boundary (13 words, 12 boundaries in the winner's example)</td></tr>
+    <tr><td>Word-span crops as extra training data</td><td>Never considered</td><td>1–5 whole words at full line height, with the matching substring as label. Seven crop types aimed at errors: carets and punctuation, capitals, similar spellings, numbers and Latin, line endings</td></tr>
+    <tr><td>Multi-view input: whole line + word-boundary windows</td><td>Never considered</td><td>Nine views per line: the whole line, six overlapping windows of 2–4 words cut between words, and two filtered copies (even lighting, stronger ink). Slightly better alone, and right on different words, mostly on large faded scans</td></tr>
+    <tr><td>Size-aware handling of tall scans</td><td>Seen in EDA, resized to 32 px anyway</td><td>A 192 px model for tall lines; multi-height TTA (×0.9, ×1.0, ×1.1) for the 26th</td></tr>
+    <tr><td>Synthetic lines (StackMix) for the CTC reader</td><td>Never considered</td><td>26th: +0.010 per fold for CTC, −0.010 for the VLM, whose language prior disliked n-gram text</td></tr>
+    <tr><td>Estimate the label-noise ceiling</td><td>Label noise studied, not quantified as a ceiling</td><td>26th: two models agreeing exactly scored ~0.945 against labels. That also explained why pseudo-labels failed</td></tr>
+    <tr><td>Bit-for-bit reproducible runs</td><td>Fixed seeds only</td><td>Winner: deterministic kernels, TF32 off, fixed example order; identical results across two cards, so small effects were measurable</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="top">Vs. the top finishers</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Dimension</th><th>This project</th><th>1st (Brainiac)</th><th>~26th (solo)</th></tr></thead>
+  <tbody>
+    <tr><td>Readers</td><td>1 family: CRNN from scratch</td><td>5 families, 8 variants: Qwen3-VL-8B, Qwen3.5-9B, LightOnOCR-2 1B (each single-strip + nine-view), ConvNeXt-large CTC, Kraken</td><td>Qwen3-VL-8B, Qwen3.5-9B, TrOCR-large (2 input shapes), CTC</td></tr>
+    <tr><td>Best single reader</td><td class="num">0.841 (ensemble of 3)</td><td class="num">0.918 OOF</td><td class="num">0.905–0.914 OOF</td></tr>
+    <tr><td>Combined</td><td class="num">0.841 val</td><td class="num">0.931 OOF</td><td class="num">0.924 OOF</td></tr>
+    <tr><td>Pretraining</td><td>None</td><td>VLMs with LoRA in vision + language (Qwen), full FT (LightOnOCR-2)</td><td>VLMs with vision + language LoRA</td></tr>
+    <tr><td>Input</td><td>32 px high, ≤ 1,024 px wide</td><td>Whole line + 6 word-boundary windows + 2 filtered copies; 128/192 px boundary models</td><td>Whole line, 3 heights at test time</td></tr>
+    <tr><td>Extra data</td><td>Augmentation</td><td>Word-span crops from forced alignment</td><td>StackMix for CTC only</td></tr>
+    <tr><td>LM</td><td>Char 4-gram in the CTC beam</td><td>Char 6-gram KenLM in Kraken only</td><td>Tried; optimal weight zero</td></tr>
+    <tr><td>Combination</td><td>Mean of 3 seeds' probabilities</td><td>ROVER candidates → weighted metric-distance pick → two-family word check (weights sum to 47)</td><td>Weighted MBR over n-best pool, rank decay e<sup>−0.4·rank</sup></td></tr>
+    <tr><td>Validation</td><td>120 fixed lines</td><td>5-fold OOF on 4,098, best of 8 grouped splits</td><td>5-fold OOF on 4,098; one fold judged too noisy</td></tr>
+    <tr><td>Compute</td><td>Laptop RTX 4060, 8 GB</td><td>4 × RTX A6000, 48 GB</td><td>not reported</td></tr>
+    <tr><td>Active</td><td>10 days</td><td>to the close</td><td>to the close</td></tr>
+    <tr><td>Score</td><td class="num">0.846 public</td><td class="num">0.933 private</td><td class="num">0.926 private</td></tr>
+  </tbody>
+</table>
+</div>
+<p>What both top write-ups also found <i>did not</i> help: bigger base models (32–38B), GRPO on
+the score, learned re-rankers, pseudo-labels, prompt rewrites after fine-tuning, word-level LMs
+and dictionaries. That list overlaps with ours (lexicon snapping), which is reassuring about the
+method, not about the result.</p>
+<p>Write-ups:
+<a href="https://zindi.world/competitions/road-barbados-historic-handwriting-challenge/discussions/35246">1st place</a> ·
+<a href="https://zindi.world/competitions/road-barbados-historic-handwriting-challenge/discussions/35438">~26th place</a>.</p>
+
+<h2 id="ocr">Handwriting OCR: what transfers</h2>
+<p>The technical lessons from this project and the two write-ups, for any line-level
+handwritten text recognition task with a small labelled set.</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Lesson</th><th>Evidence</th></tr></thead>
+  <tbody>
+    <tr><td><b>Start from a modern VLM fine-tune, adapt the vision side.</b> LoRA in the vision tower and the LM, mergers trained at a lower LR, 2 epochs</td><td>0.869 → 0.905 from vision LoRA alone (26th); 8B matched 32B (1st)</td></tr>
+    <tr><td><b>Keep a CTC reader with a character LM next to it.</b> It reads letters, not likely words, so it keeps period spellings. Built well, it is nearly as strong as a VLM</td><td>Kraken + KenLM 0.909 OOF alone and the largest vote (1st); most valuable member at 0.816 alone (26th); our LM fusion +0.030</td></tr>
+    <tr><td><b>Use the LM only where there is no language prior.</b> Inside the CTC beam, not in a VLM and not for whole-line rescoring</td><td>Both worse in the 1st place; weight 0 in the 26th</td></tr>
+    <tr><td><b>Combine with the metric.</b> Pick the candidate with the lowest weighted metric distance to all readings; weight readers by their contribution to the vote, not by their score alone</td><td>MBR 0.9240 vs. ROVER splicing 0.9224–0.9233 vs. learned reranker 0.9147 (26th)</td></tr>
+    <tr><td><b>Shape the input to the line.</b> Wide inputs for long lines; a separate path for tall, damaged scans</td><td>TrOCR-large 0.878 wide vs. 0.850 square (26th); 192 px models for tall scans (1st)</td></tr>
+    <tr><td><b>Make data from your own labels.</b> Forced alignment gives word boxes for free; cut real word spans aimed at known errors</td><td>Winner's word-span crops; real crops over synthetic for VLMs (26th)</td></tr>
+    <tr><td><b>Never normalise the transcripts.</b> Train and decode on the spelling the annotator used</td><td>Lexicon snapping, dictionaries and rare-word specialists hurt in all three projects</td></tr>
+    <tr><td><b>Know the label ceiling.</b> Score agreeing models against the labels before chasing the last points</td><td>~0.945 (26th)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="lessons">Lessons</h2>
+
+<h3>Run the organisers' recommended approaches before ruling them out</h3>
+<p>The starter pack named three approaches and shipped training scripts for them. The winners
+used two of them in their modern form. We ran the third and a model that was not in the pack.
+A starter pack is the organisers' prior about what works on their data. Get a real number for
+each of its approaches, in its own environment, before dropping one.</p>
+
+<h3>One model's failure is not a family's verdict</h3>
+<p>TrOCR-base failed, and we concluded that pretrained text decoders fail on this data. The
+conclusion was about one 2021 model, at one input shape, adapted on one side. Before closing a
+family, try its current strongest member, and check that the adaptation touches the part of the
+model the failure points to.</p>
+
+<h3>A smoke test is not a result</h3>
+<p>A one-epoch run at 0.122 ended full fine-tuning. A smoke test answers "does it run?", not
+"is it worse?". Write down what a failure looks like before the run, and do not let a pipeline
+check decide an approach.</p>
+
+<h3>Ensemble across families, judged by contribution</h3>
+<p>More seeds of one recipe gave us +0.0095 and would have given little more. The winners'
+gains came from readers that make different mistakes, weighted by how much each one improves
+the combined result, so a weak model alone can carry the largest vote.</p>
+
+<h3>Validate on all the data you have</h3>
+<p>120 lines tracked the leaderboard, but could not separate ideas closer than about a
+hundredth. Both top finishers used out-of-fold predictions on all 4,098 lines and distrusted
+single folds. When the dataset is a few thousand rows, k-fold OOF costs k trainings and buys the
+only instrument fine enough to rank the last ideas.</p>
+
+<h3>One environment per conflicting toolkit</h3>
+<p>Kraken was lost to a dependency conflict in <code>base</code>. The starter pack already
+made one environment per approach; the winner kept vLLM in its own. When two toolkits pin
+different torch or numpy versions, give each its own environment and exchange files between
+them.</p>
+
+<h3>"No ideas left" means the list has not been read</h3>
+<p>The project closed with eight weeks left. Before closing, list every approach in the starter
+pack, in the forum and in the domain's standard toolbox, and mark each one run, priced, or ruled
+out with a number. If anything is unmarked, the project is not done.</p>
+
+<h3>What carried over well</h3>
+<p>Pinning the official metric from the forum on day one. Isolated, one-change experiments with
+logged negative results. A beam search checked against brute force before use. The decision not
+to normalise labels, and the rejection of the lexicon fix, both matched the winner's findings.
+The character LM in the CTC beam was the same idea as the winner's KenLM in Kraken.</p>
+
+<h2 id="future">Future: a rerun</h2>
+<p>If late submissions are accepted, each step can be checked against the hidden set; otherwise
+against five-fold OOF. Each step changes one thing and has a gate.</p>
+<div class="pipeline">
+  <div class="pstep"><b>1. Folds.</b> Five folds over all 4,098 lines, grouped by transcript and
+    near-duplicate image. Re-score the current CRNN ensemble out-of-fold to get a baseline and a
+    row-wise noise floor.</div>
+  <div class="parrow">↓</div>
+  <div class="pstep"><b>2. A VLM reader.</b> Qwen3-VL with LoRA in the vision tower and the LM
+    (2B locally, 8B in 4-bit on a rented GPU), 2 epochs, original transcripts.
+    <br><i>Gate:</i> OOF above the CRNN's.</div>
+  <div class="parrow">↓</div>
+  <div class="pstep"><b>3. Metric-aware vote.</b> Pool n-best readings from the VLM and the CRNN
+    and pick by weighted W/12 + C/55 distance.
+    <br><i>Gate:</i> OOF above the better single reader.</div>
+  <div class="parrow">↓</div>
+  <div class="pstep"><b>4. Kraken + KenLM</b>, in its own environment, as a third family.
+    <br><i>Gate:</i> the vote's OOF with and without it.</div>
+  <div class="parrow">↓</div>
+  <div class="pstep"><b>5. Word positions.</b> Forced alignment with the CTC reader, then
+    word-span crops for the VLM.
+    <br><i>Gate:</i> OOF on the VLM alone, then on the vote.</div>
+</div>
+
+<h2 id="log">Development log</h2>
+<p>Every experiment, gate result and negative result is in
+<a href="https://github.com/Alherma7/R.O.A.D.-Barbados-Historic-Handwriting/blob/master/README.md">README.md</a>.
+Sources are in
+<a href="https://github.com/Alherma7/R.O.A.D.-Barbados-Historic-Handwriting/blob/master/RESOURCES.md">RESOURCES.md</a>.</p>
+
+<footer>Alejandro Hernández Mairal · R.O.A.D. Barbados Historic Handwriting Challenge (Zindi,
+2026). Write-ups cited are summarised from their public posts on the competition's discussion
+board, read on 2026-11-16.</footer>
+</main>
+</body>
+</html>
